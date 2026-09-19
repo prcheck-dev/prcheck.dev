@@ -5,8 +5,12 @@ function App() {
   const [api, setApi] = useState(null)
   const [error, setError] = useState(null)
 
+  // In dev, VITE_API_URL is empty and the Vite proxy forwards /api to Django.
+  // In production it points at the deployed API origin.
+  const apiBase = import.meta.env.VITE_API_URL ?? ''
+
   useEffect(() => {
-    fetch('/api/health/')
+    fetch(`${apiBase}/api/health/`)
       .then((res) => res.json())
       .then(setApi)
       .catch((err) => setError(err.message))

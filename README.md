@@ -38,3 +38,10 @@ npm run dev
 ```
 
 Runs at http://localhost:5173. `/api` requests are proxied to the Django server.
+
+## Deployment & CI/CD
+
+Azure infrastructure, deploy scripts, and the GitHub Actions pipelines live in
+[`infra/`](infra/README.md) and [`.github/workflows/`](.github/workflows). Both
+the backend and frontend deploy on push to `main` and can be triggered manually
+from the Actions tab.

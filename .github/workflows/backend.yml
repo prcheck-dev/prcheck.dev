@@ -1,0 +1,81 @@
+name: Backend CI/CD
+
+# Runs on pushes that touch the backend, and can be triggered by hand from the
+# Actions tab (workflow_dispatch).
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend.yml"
+      - "infra/deploy-backend.sh"
+  workflow_dispatch:
+    inputs:
+      run_migrations:
+        description: "Run database migrations after deploy"
+        type: boolean
+        default: true
+
+# Never let two backend deploys race each other.
+concurrency:
+  group: backend-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  AZURE_RESOURCE_GROUP: prcheck-dev-rg
+  ACR_NAME: prcheckdevacr0108f4
+  IMAGE_NAME: prcheck-dev-api
+  CONTAINERAPP_NAME: prcheck-dev-api
+  MIGRATION_JOB: prcheck-dev-migrate
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Run tests
+        working-directory: backend
+        env:
+          DJANGO_DEBUG: "True" # tests use a throwaway secret key / sqlite
+        run: python manage.py test
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    # Only deploy from main; PR pushes just run tests.
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Build image in ACR (tagged with commit SHA)
+        run: |
+          az acr build -r "$ACR_NAME" \
+            -t "$IMAGE_NAME:${{ github.sha }}" \
+            -t "$IMAGE_NAME:latest" \
+            ./backend
+
+      - name: Roll out new image to the container app
+        run: |
+          az containerapp update \
+            -n "$CONTAINERAPP_NAME" -g "$AZURE_RESOURCE_GROUP" \
+            --image "$ACR_NAME.azurecr.io/$IMAGE_NAME:${{ github.sha }}"
+
+      - name: Run database migrations
+        # On push we always migrate; on manual runs it is opt-out via the input.
+        if: github.event_name == 'push' || inputs.run_migrations
+        run: |
+          az containerapp job start \
+            -n "$MIGRATION_JOB" -g "$AZURE_RESOURCE_GROUP"
