@@ -8,7 +8,7 @@ on:
     paths:
       - "backend/**"
       - ".github/workflows/backend.yml"
-      - "infra/deploy-backend.sh"
+      - "infra/**"
   workflow_dispatch:
     inputs:
       run_migrations:
@@ -30,6 +30,7 @@ env:
 
 jobs:
   test:
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -50,6 +51,7 @@ jobs:
   deploy:
     needs: test
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     # Only deploy from main; PR pushes just run tests.
     if: github.ref == 'refs/heads/main'
     steps:

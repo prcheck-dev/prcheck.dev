@@ -63,7 +63,38 @@ Settings → Secrets and variables → Actions:
 **Variables**
 | Name | Value |
 |------|-------|
-| `VITE_API_URL` | `https://prcheck-dev-api.icyrock-ebce8b31.eastus2.azurecontainerapps.io` |
+| `VITE_API_URL` | `https://api.prcheck.dev` (or the Azure FQDN before cutover) |
+
+The review engine's model and GitHub integration settings are runtime
+configuration on the API container (`PRCHECK_*`, `ANTHROPIC_*`, or
+`PRCHECK_OPENAI_*`); do not commit those values or place them in workflow
+variables. The existing deployment keeps OAuth credentials in Key Vault.
+
+## Custom domains (prcheck.dev)
+
+DNS is managed at **Cloudflare** (not Azure). The apex/`api` currently point at
+the old system, so switching them over is a **cutover**: run
+[`cutover-domain.sh`](cutover-domain.sh), which frees the domains from the old
+resources, deploys the frontend to the new SWA, and prints the exact Cloudflare
+records to paste.
+
+```bash
+az login
+./infra/cutover-domain.sh prepare   # deploys FE, frees domains, prints DNS records
+# ... paste the printed records into Cloudflare (DNS-only / grey cloud) ...
+./infra/cutover-domain.sh bind      # validates + issues managed TLS certs
+```
+
+Target mapping:
+
+| Host | Points to |
+|------|-----------|
+| `prcheck.dev` (apex) | `prcheck-dev-web` (Static Web App) |
+| `www.prcheck.dev` | `prcheck-dev-web` |
+| `api.prcheck.dev` | `prcheck-dev-api` (Container App) |
+
+GitHub OAuth callback after cutover:
+`https://api.prcheck.dev/api/auth/github/callback/`
 
 ## Manual deploys (without CI)
 

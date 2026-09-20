@@ -27,6 +27,13 @@ python manage.py runserver
    GITHUB_OAUTH_CLIENT_SECRET=...
    ```
 
+## Code-review agent
+
+An autonomous GitHub PR code-review agent lives in the [`reviews`](reviews/README.md)
+app (`/api/reviews/`). It fetches a PR diff, reviews it with an LLM + an
+adversarial second pass, computes a verdict, and can publish findings back to
+the PR. Review quality is ported from `shipwright-agent`.
+
 ## Auth endpoints
 
 | Method | Path                              | Auth        | Purpose                                             |

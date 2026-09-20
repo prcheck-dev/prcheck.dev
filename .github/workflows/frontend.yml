@@ -29,8 +29,10 @@ jobs:
         working-directory: frontend
         env:
           # Points the SPA at the live API. Set as a repo variable (Settings ->
-          # Secrets and variables -> Actions -> Variables).
-          VITE_API_URL: ${{ vars.VITE_API_URL }}
+          # Secrets and variables -> Actions -> Variables). Keep a production
+          # default so a missing repository variable cannot silently ship a
+          # same-origin API URL that Static Web Apps does not proxy.
+          VITE_API_URL: ${{ vars.VITE_API_URL || 'https://api.prcheck.dev' }}
         run: |
           npm ci
           npm run build

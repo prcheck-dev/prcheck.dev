@@ -65,6 +65,7 @@ INSTALLED_APPS = [
     "corsheaders",
     "accounts",
     "api",
+    "reviews",
 ]
 
 AUTH_USER_MODEL = "accounts.User"
@@ -173,6 +174,7 @@ REST_FRAMEWORK = {
         "anon": "60/hour",
         "user": "1000/hour",
         "auth": "20/hour",  # brute-force guard on the auth endpoints
+        "reviews": "120/hour",  # review triggers are expensive (model calls)
     },
     "DEFAULT_RENDERER_CLASSES": (
         "rest_framework.renderers.JSONRenderer",
@@ -217,6 +219,45 @@ GITHUB_OAUTH_CLIENT_ID = env("GITHUB_OAUTH_CLIENT_ID")
 GITHUB_OAUTH_CLIENT_SECRET = env("GITHUB_OAUTH_CLIENT_SECRET")
 GITHUB_OAUTH_REDIRECT_URI = env("GITHUB_OAUTH_REDIRECT_URI")
 GITHUB_OAUTH_SCOPE = env("GITHUB_OAUTH_SCOPE")
+
+
+# --------------------------------------------------------------------------- #
+# Reviews (code-review agent)
+# --------------------------------------------------------------------------- #
+
+# LLM backend: "anthropic" (default), "openai" (OpenAI-compatible incl. Azure
+# OpenAI), or "deterministic" (no model call; every review degrades cleanly).
+PRCHECK_LLM_BACKEND = env("PRCHECK_LLM_BACKEND", default="anthropic")
+
+# Anthropic
+ANTHROPIC_API_KEY = env("ANTHROPIC_API_KEY", default="")
+ANTHROPIC_MODEL = env("ANTHROPIC_MODEL", default="claude-sonnet-4-5")
+ANTHROPIC_BASE_URL = env("ANTHROPIC_BASE_URL", default="https://api.anthropic.com")
+
+# OpenAI-compatible (set PRCHECK_OPENAI_API_VERSION to target Azure OpenAI)
+PRCHECK_OPENAI_API_KEY = env("PRCHECK_OPENAI_API_KEY", default="")
+PRCHECK_OPENAI_BASE_URL = env("PRCHECK_OPENAI_BASE_URL", default="https://api.openai.com/v1")
+PRCHECK_OPENAI_MODEL = env("PRCHECK_OPENAI_MODEL", default="gpt-4o")
+PRCHECK_OPENAI_API_VERSION = env("PRCHECK_OPENAI_API_VERSION", default="")
+
+# Model-call tuning
+PRCHECK_LLM_MAX_TOKENS = env.int("PRCHECK_LLM_MAX_TOKENS", default=4096)
+PRCHECK_LLM_TEMPERATURE = env.float("PRCHECK_LLM_TEMPERATURE", default=0.0)
+PRCHECK_LLM_TIMEOUT_S = env.int("PRCHECK_LLM_TIMEOUT_S", default=120)
+PRCHECK_LLM_MAX_RETRIES = env.int("PRCHECK_LLM_MAX_RETRIES", default=4)
+
+# Review behaviour
+PRCHECK_ENABLE_ADVERSARY = env.bool("PRCHECK_ENABLE_ADVERSARY", default=True)
+PRCHECK_REVIEW_MAX_WORKERS = env.int("PRCHECK_REVIEW_MAX_WORKERS", default=4)
+
+# GitHub access for fetching PRs and (optionally) publishing results.
+PRCHECK_GITHUB_TOKEN = env("PRCHECK_GITHUB_TOKEN", default="")
+PRCHECK_GITHUB_API_URL = env("PRCHECK_GITHUB_API_URL", default="https://api.github.com")
+PRCHECK_GITHUB_WEBHOOK_SECRET = env("PRCHECK_GITHUB_WEBHOOK_SECRET", default="")
+
+# Publishing findings back to the PR (sticky summary + inline comments).
+PRCHECK_PUBLISH_REVIEWS = env.bool("PRCHECK_PUBLISH_REVIEWS", default=False)
+PRCHECK_MAX_INLINE_COMMENTS = env.int("PRCHECK_MAX_INLINE_COMMENTS", default=40)
 
 
 # --------------------------------------------------------------------------- #
@@ -274,5 +315,6 @@ LOGGING = {
     "loggers": {
         "django.security": {"handlers": ["console"], "level": "WARNING", "propagate": False},
         "accounts": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "reviews": {"handlers": ["console"], "level": "INFO", "propagate": False},
     },
 }
