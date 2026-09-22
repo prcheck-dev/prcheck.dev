@@ -106,3 +106,11 @@ pnpm-debug.log*
 ehthumbs.db
 Thumbs.db
 desktop.ini
+
+# Cloudflare token (local only, never commit)
+infra/cloudflare_token.md
+
+
+infra/app_handover.md
+infra/gh_app_webhook.txt
+infra/github_app_key.pem

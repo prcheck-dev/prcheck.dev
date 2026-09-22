@@ -253,6 +253,52 @@ class RunReviewTests(TestCase):
 
 
 # --------------------------------------------------------------------------- #
+# GitHub App auth
+# --------------------------------------------------------------------------- #
+class GitHubAppTests(TestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        cls.pem = key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        ).decode()
+
+    def test_not_configured_by_default(self):
+        from . import github_app
+        with override_settings(PRCHECK_GITHUB_APP_ID="", PRCHECK_GITHUB_APP_PRIVATE_KEY=""):
+            self.assertFalse(github_app.is_configured())
+
+    def test_token_for_repo_mints_and_caches(self):
+        from . import github_app
+        github_app._TOKEN_CACHE.clear()
+        calls = {"post": 0}
+
+        def fake_get(self, path):
+            return {"id": 999}
+
+        def fake_post(self, path, body):
+            calls["post"] += 1
+            return {"token": "ghs_installtoken", "expires_at": "2999-01-01T00:00:00Z"}
+
+        with override_settings(PRCHECK_GITHUB_APP_ID="4886852",
+                               PRCHECK_GITHUB_APP_PRIVATE_KEY=self.pem), \
+             mock.patch.object(gh.GitHubAPI, "get", fake_get), \
+             mock.patch.object(gh.GitHubAPI, "post", fake_post):
+            self.assertTrue(github_app.is_configured())
+            t1 = github_app.token_for_repo("o/r")
+            t2 = github_app.token_for_repo("o/r")  # served from cache
+
+        self.assertEqual(t1, "ghs_installtoken")
+        self.assertEqual(t2, "ghs_installtoken")
+        self.assertEqual(calls["post"], 1)  # minted once, then cached
+
+
+# --------------------------------------------------------------------------- #
 # API
 # --------------------------------------------------------------------------- #
 class APITests(TestCase):

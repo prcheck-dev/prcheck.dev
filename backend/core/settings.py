@@ -255,6 +255,20 @@ PRCHECK_GITHUB_TOKEN = env("PRCHECK_GITHUB_TOKEN", default="")
 PRCHECK_GITHUB_API_URL = env("PRCHECK_GITHUB_API_URL", default="https://api.github.com")
 PRCHECK_GITHUB_WEBHOOK_SECRET = env("PRCHECK_GITHUB_WEBHOOK_SECRET", default="")
 
+# GitHub App: the reviewer posts as the app when these are set (preferred over a
+# PAT). The private key is a multi-line PEM, so it can arrive base64-encoded
+# (prod, avoids newline issues in env vars) or as a file path (local dev).
+PRCHECK_GITHUB_APP_ID = env("PRCHECK_GITHUB_APP_ID", default="")
+_app_key_b64 = env("PRCHECK_GITHUB_APP_PRIVATE_KEY_B64", default="")
+_app_key_path = env("PRCHECK_GITHUB_APP_PRIVATE_KEY_PATH", default="")
+if _app_key_b64:
+    import base64
+    PRCHECK_GITHUB_APP_PRIVATE_KEY = base64.b64decode(_app_key_b64).decode("utf-8")
+elif _app_key_path and Path(_app_key_path).exists():
+    PRCHECK_GITHUB_APP_PRIVATE_KEY = Path(_app_key_path).read_text(encoding="utf-8")
+else:
+    PRCHECK_GITHUB_APP_PRIVATE_KEY = env("PRCHECK_GITHUB_APP_PRIVATE_KEY", default="")
+
 # Publishing findings back to the PR (sticky summary + inline comments).
 PRCHECK_PUBLISH_REVIEWS = env.bool("PRCHECK_PUBLISH_REVIEWS", default=False)
 PRCHECK_MAX_INLINE_COMMENTS = env.int("PRCHECK_MAX_INLINE_COMMENTS", default=40)

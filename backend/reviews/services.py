@@ -15,6 +15,7 @@ from django.conf import settings
 from django.db import connection
 
 from . import adversary as adversary_mod
+from . import github_app
 from . import github_client as gh
 from .budget import Budget, BudgetExhausted
 from .llm import Completer
@@ -39,9 +40,17 @@ def run_review(review_id: int) -> Review:
     review.status = Review.Status.RUNNING
     review.save(update_fields=["status", "updated_at"])
 
-    token = _conf("PRCHECK_GITHUB_TOKEN")
-    if not token:
-        return _fail(review, "PRCHECK_GITHUB_TOKEN is not configured on the server.")
+    # Prefer acting as the installed GitHub App (comments post as the bot);
+    # fall back to a static PAT when the App is not configured.
+    if github_app.is_configured():
+        try:
+            token = github_app.token_for_repo(review.repo)
+        except gh.GitHubAPIError as exc:
+            return _fail(review, f"GitHub App auth failed: {exc}")
+    else:
+        token = _conf("PRCHECK_GITHUB_TOKEN")
+        if not token:
+            return _fail(review, "No GitHub credentials configured (App or PRCHECK_GITHUB_TOKEN).")
 
     api = gh.GitHubAPI(
         repo=review.repo, token=token,
