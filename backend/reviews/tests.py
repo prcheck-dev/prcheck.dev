@@ -202,6 +202,22 @@ class LLMTests(TestCase):
         # An unrelated 400 is not masked by a retry.
         self.assertIsNone(_adapt_reasoning_payload(base, "openai HTTP 400: bad content filter"))
 
+    @override_settings(PRCHECK_LLM_BACKEND="openai", PRCHECK_OPENAI_API_KEY="k",
+                       PRCHECK_OPENAI_MODEL="gpt-5.2", PRCHECK_OPENAI_API_VERSION="2025-04-01-preview")
+    def test_openai_retries_when_reasoning_exhausts_output(self):
+        calls = {"n": 0}
+
+        def fake_post(self, url, payload, *, headers, provider):
+            calls["n"] += 1
+            if calls["n"] == 1:  # reasoning ate the budget -> empty, finish=length
+                return json.dumps({"choices": [{"message": {"content": ""}, "finish_reason": "length"}], "usage": {}})
+            return json.dumps({"choices": [{"message": {"content": '{"findings":[]}'}, "finish_reason": "stop"}], "usage": {}})
+
+        with mock.patch.object(Completer, "_post", fake_post):
+            text, _ = Completer().complete("s", "p", max_tokens=4096)
+        self.assertIn("findings", text)
+        self.assertEqual(calls["n"], 2)  # retried with a bigger budget
+
     @override_settings(**REVIEW_SETTINGS)
     def test_retry_on_invalid_then_success(self):
         calls = {"n": 0}

@@ -140,12 +140,27 @@ class Completer:
             adjusted = _adapt_reasoning_payload(payload, str(exc))
             if adjusted is None:
                 raise
-            raw = self._post(url, adjusted, headers=headers, provider="openai")
+            payload = adjusted
+            raw = self._post(url, payload, headers=headers, provider="openai")
         data = json.loads(raw)
         choices = data.get("choices") or []
         if not choices:
             raise RuntimeError("openai-compatible response had no choices")
         text = (choices[0].get("message") or {}).get("content") or ""
+        finish = choices[0].get("finish_reason")
+        # Reasoning models can spend the whole budget on hidden reasoning tokens
+        # and return empty content (finish_reason=length). Retry once with a much
+        # larger cap so big/complex files don't silently degrade.
+        if not text.strip() and finish == "length":
+            bumped = dict(payload)
+            cap = int(bumped.get("max_completion_tokens") or bumped.get("max_tokens") or 4096)
+            bumped.pop("max_tokens", None)
+            bumped["max_completion_tokens"] = min(cap * 3, 32000)
+            raw = self._post(url, bumped, headers=headers, provider="openai")
+            data = json.loads(raw)
+            choices = data.get("choices") or []
+            text = ((choices[0].get("message") or {}).get("content") or "") if choices else ""
+            usage = data.get("usage") or {}
         usage = data.get("usage") or {}
         prompt_tokens = int(usage.get("prompt_tokens") or 0)
         completion_tokens = int(usage.get("completion_tokens") or 0)

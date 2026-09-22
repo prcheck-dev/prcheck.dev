@@ -55,13 +55,14 @@ Respond with ONLY JSON:
 
 VERIFY_PROMPT = """You are prcheck's verification stage. Decide which candidate findings are REAL, concrete issues introduced by this diff and worth a senior engineer's attention.
 
-REJECT a candidate if any hold:
-- It speculates about code not shown in the diff, or depends on unverified external/runtime behavior.
-- It is not actually true given the changed code (misreads the logic).
-- It is trivial, obvious, or merely restates the code (noise).
-- It duplicates another candidate's underlying issue.
+REJECT a candidate if ANY of these hold:
+- ASSUMPTION: it assumes the existence or behavior of code, config, callers, imports, or dependencies that are NOT present in the provided diff/file (e.g., "X may not accept this kwarg", "a .gitmodules entry is missing", "the caller probably does Y"). If you cannot confirm it from what is shown, reject it.
+- WRONG: it misreads the changed logic, or its failing path does not actually hold given the code shown.
+- NON-ACTIONABLE: it does not imply a concrete code change — vague advice, restating the code, or "consider ..." with no demonstrated defect.
+- DUPLICATE: it describes the same underlying fix as another (usually higher-ranked) candidate. Keep only one.
+- NOISE: trivial/obvious with no real impact.
 
-KEEP genuine bugs, security/auth issues, data-loss risks, and concrete correctness/interface defects — even minor ones — as long as the diff demonstrates them.
+KEEP genuine bugs, security/auth issues, data-loss risks, and concrete correctness/interface defects — even minor ones — when the diff itself demonstrates the failing path.
 
 Diff under review:
 {diff}
@@ -118,10 +119,14 @@ def run_deep_review(
     def _generate(block):
         path, block_diff = block
         content = file_contents.get(path or "", "")
+        # Research: over-large context redirects attention from simpler issues and
+        # (on reasoning models) exhausts the output budget. Include the file only
+        # when it fits the cap; otherwise rely on the diff's own hunk context.
+        include = content and len(content) <= ctx_limit
         prompt = (
             f"PR title: {pr_title}\nFile: {path}\n\n"
             f"Diff for this file:\n{_fence(block_diff, diff_limit)}\n\n"
-            + (f"Full current file (context only):\n{_fence(content, ctx_limit)}\n" if content else "")
+            + (f"Full current file (context only):\n{_fence(content, ctx_limit)}\n" if include else "")
         )
         return structured_call(
             completer, budget, session="deep-generate",
@@ -170,13 +175,32 @@ def _verify(completer, budget, diff_text, candidates):
     return [c for i, c in enumerate(candidates) if i in keep_idx]
 
 
+def _tokens(text):
+    return set(re.findall(r"[a-z0-9_]{3,}", str(text).casefold()))
+
+
 def _dedupe(candidates):
-    seen, out = set(), []
+    """Drop exact and near-duplicate findings.
+
+    Two findings are near-duplicates when they sit on the same file within a few
+    lines and their token sets overlap heavily (Jaccard > 0.6) — this catches the
+    same defect reported with different wording.
+    """
+    out = []
     for c in candidates:
-        key = (str(c.get("path")), c.get("line"),
-               re.sub(r"\s+", " ", str(c.get("text", ""))).strip().casefold()[:80])
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(c)
+        ct = _tokens(c.get("text"))
+        cpath, cline = str(c.get("path")), c.get("line")
+        dup = False
+        for k in out:
+            if str(k.get("path")) != cpath:
+                continue
+            close = isinstance(cline, int) and isinstance(k.get("line"), int) and abs(cline - k["line"]) <= 3
+            kt = _tokens(k.get("text"))
+            union = ct | kt
+            jac = len(ct & kt) / len(union) if union else 0
+            if (cline == k.get("line") and jac > 0.5) or (close and jac > 0.6):
+                dup = True
+                break
+        if not dup:
+            out.append(c)
     return out
