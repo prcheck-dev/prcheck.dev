@@ -249,6 +249,10 @@ PRCHECK_LLM_MAX_RETRIES = env.int("PRCHECK_LLM_MAX_RETRIES", default=4)
 # Review behaviour
 PRCHECK_ENABLE_ADVERSARY = env.bool("PRCHECK_ENABLE_ADVERSARY", default=True)
 PRCHECK_REVIEW_MAX_WORKERS = env.int("PRCHECK_REVIEW_MAX_WORKERS", default=4)
+# Show a GitHub check run ("prcheck / review") that goes in-progress -> pass/fail.
+PRCHECK_ENABLE_CHECKS = env.bool("PRCHECK_ENABLE_CHECKS", default=True)
+# PR comment that triggers a review, e.g. "/prcheck" or "/prcheck review".
+PRCHECK_COMMAND_PREFIX = env("PRCHECK_COMMAND_PREFIX", default="/prcheck")
 
 # GitHub access for fetching PRs and (optionally) publishing results.
 PRCHECK_GITHUB_TOKEN = env("PRCHECK_GITHUB_TOKEN", default="")

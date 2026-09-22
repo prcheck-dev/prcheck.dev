@@ -71,9 +71,11 @@ def run_review(review_id: int) -> Review:
     review.deletions = snapshot.deletions
     review.save(update_fields=["pr_title", "pr_url", "head_sha", "additions", "deletions", "updated_at"])
 
+    # Show an in-progress check on the PR while the review runs.
+    check_run_id = gh.create_check_run(api, snapshot.head_sha) if _conf("PRCHECK_ENABLE_CHECKS", True) else None
+
     if not snapshot.diff_text.strip():
-        review.degraded = False
-        return _finalize(review, api, snapshot, findings=[], degraded=False)
+        return _finalize(review, api, snapshot, findings=[], degraded=False, check_run_id=check_run_id)
 
     # -- primary reviewer over shards (concurrent) -------------------------- #
     shards = build_review_shards(snapshot.changed_files, snapshot.diff_text)
@@ -116,11 +118,12 @@ def run_review(review_id: int) -> Review:
         review, api, snapshot,
         findings=findings, degraded=degraded,
         adversarial_verdict=adversarial_verdict, usage=budget.as_dict(),
+        check_run_id=check_run_id,
     )
 
 
 def _finalize(review, api, snapshot, *, findings, degraded,
-              adversarial_verdict=None, usage=None) -> Review:
+              adversarial_verdict=None, usage=None, check_run_id=None) -> Review:
     verdict, conditions = compute_verdict(findings, degraded=degraded)
     # The adversarial pass can only tighten the verdict.
     if adversarial_verdict == "BLOCK":
@@ -145,6 +148,9 @@ def _finalize(review, api, snapshot, *, findings, degraded,
     review.usage = usage or {}
     review.status = Review.Status.COMPLETED
     review.save(update_fields=["verdict", "conditions", "degraded", "usage", "status", "updated_at"])
+
+    if _conf("PRCHECK_ENABLE_CHECKS", True):
+        gh.complete_check_run(api, check_run_id, verdict, conditions, findings)
 
     if _conf("PRCHECK_PUBLISH_REVIEWS", False) and api.enabled:
         _publish(review, api, snapshot, findings, verdict, conditions)

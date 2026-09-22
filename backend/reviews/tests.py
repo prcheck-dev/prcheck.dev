@@ -340,3 +340,61 @@ class APITests(TestCase):
             resp = self.client.post(reverse("reviews:github-webhook"),
                                     data="{}", content_type="application/json")
         self.assertEqual(resp.status_code, 503)
+
+    def _signed(self, event, payload, secret="s"):
+        import hashlib
+        import hmac
+        body = json.dumps(payload).encode()
+        sig = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+        return self.client.post(
+            reverse("reviews:github-webhook"), data=body, content_type="application/json",
+            HTTP_X_HUB_SIGNATURE_256=sig, HTTP_X_GITHUB_EVENT=event,
+        )
+
+    @override_settings(PRCHECK_GITHUB_WEBHOOK_SECRET="s")
+    def test_comment_command_triggers_review(self):
+        payload = {
+            "action": "created",
+            "issue": {"number": 7, "pull_request": {"url": "x"}},
+            "comment": {"body": "/prcheck review"},
+            "repository": {"full_name": "o/r"},
+        }
+        with mock.patch("reviews.views.run_review_in_background") as sched:
+            resp = self._signed("issue_comment", payload)
+        self.assertEqual(resp.status_code, 202)
+        self.assertTrue(Review.objects.filter(repo="o/r", pr_number=7, trigger="command").exists())
+        sched.assert_called_once()
+
+    @override_settings(PRCHECK_GITHUB_WEBHOOK_SECRET="s")
+    def test_non_command_comment_ignored(self):
+        payload = {
+            "action": "created",
+            "issue": {"number": 7, "pull_request": {"url": "x"}},
+            "comment": {"body": "looks good to me"},
+            "repository": {"full_name": "o/r"},
+        }
+        resp = self._signed("issue_comment", payload)
+        self.assertEqual(resp.json(), {"ignored": True})
+
+    @override_settings(PRCHECK_GITHUB_WEBHOOK_SECRET="s")
+    def test_command_on_plain_issue_ignored(self):
+        payload = {
+            "action": "created",
+            "issue": {"number": 7},  # no pull_request -> not a PR
+            "comment": {"body": "/prcheck"},
+            "repository": {"full_name": "o/r"},
+        }
+        resp = self._signed("issue_comment", payload)
+        self.assertEqual(resp.json(), {"ignored": True})
+
+    def test_check_run_maps_verdict_to_conclusion(self):
+        seen = {}
+
+        def fake_patch(self, path, body):
+            seen["conclusion"] = body.get("conclusion")
+            return {}
+
+        api = gh.GitHubAPI(repo="o/r", token="t")
+        with mock.patch.object(gh.GitHubAPI, "patch", fake_patch):
+            gh.complete_check_run(api, 123, "block", [], [])
+        self.assertEqual(seen["conclusion"], "failure")

@@ -11,6 +11,7 @@ import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 # GitHub's PR diff media type is all-or-nothing; over this many changed lines the
 # API returns 406 and we fall back to reconstructing the diff from /files.
@@ -293,6 +294,54 @@ def upsert_summary_comment(api: GitHubAPI, pr: int, body: str) -> None:
         api.patch(f"/repos/{api.repo}/issues/comments/{existing['id']}", {"body": body})
     else:
         api.post(f"/repos/{api.repo}/issues/{pr}/comments", {"body": body})
+
+
+# A check run gives the PR a visible "prcheck is reviewing…" status that
+# resolves to pass/fail, separate from the review comments.
+_VERDICT_CONCLUSION = {
+    "block": "failure",
+    "request-changes": "failure",
+    "approve-with-conditions": "neutral",
+    "approve": "success",
+}
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def create_check_run(api: GitHubAPI, head_sha: str) -> int | None:
+    """Open an in-progress check run; returns its id (or None on failure)."""
+    if not api.enabled or not head_sha:
+        return None
+    try:
+        result = api.post(f"/repos/{api.repo}/check-runs", {
+            "name": "prcheck / review",
+            "head_sha": head_sha,
+            "status": "in_progress",
+            "started_at": _now_iso(),
+            "output": {"title": "prcheck is reviewing…",
+                       "summary": "Running the code review on this pull request."},
+        })
+        return result.get("id") if isinstance(result, dict) else None
+    except GitHubAPIError:
+        return None  # missing Checks:write permission should not fail the review
+
+
+def complete_check_run(api: GitHubAPI, check_run_id: int | None, verdict: str,
+                       conditions: list[dict], findings: list[dict]) -> None:
+    if not api.enabled or not check_run_id:
+        return
+    title = f"prcheck: {verdict} — {len(findings)} finding(s)"
+    try:
+        api.patch(f"/repos/{api.repo}/check-runs/{check_run_id}", {
+            "status": "completed",
+            "conclusion": _VERDICT_CONCLUSION.get(verdict, "neutral"),
+            "completed_at": _now_iso(),
+            "output": {"title": title, "summary": render_summary(verdict, conditions, findings)},
+        })
+    except GitHubAPIError:
+        pass
 
 
 def publish_inline_comments(api: GitHubAPI, pr: int, head_sha: str, diff_text: str,

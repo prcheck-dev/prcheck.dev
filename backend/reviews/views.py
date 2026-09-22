@@ -87,15 +87,20 @@ def github_webhook(request):
     if not hmac.compare_digest(signature, expected):
         return Response({"detail": "Invalid signature."}, status=status.HTTP_401_UNAUTHORIZED)
 
-    if request.META.get("HTTP_X_GITHUB_EVENT") == "ping":
+    event = request.META.get("HTTP_X_GITHUB_EVENT")
+    if event == "ping":
         return Response({"ok": True})
-    if request.META.get("HTTP_X_GITHUB_EVENT") != "pull_request":
-        return Response({"ignored": True})
 
     try:
         payload = json.loads(request.body.decode("utf-8"))
     except (ValueError, UnicodeDecodeError):
         return Response({"detail": "Invalid payload."}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Comment command: `/prcheck` (or `/prcheck review`) on a PR re-runs the review.
+    if event == "issue_comment":
+        return _handle_comment_command(payload)
+    if event != "pull_request":
+        return Response({"ignored": True})
 
     if payload.get("action") not in {"opened", "synchronize", "reopened", "ready_for_review"}:
         return Response({"ignored": True})
@@ -106,5 +111,33 @@ def github_webhook(request):
         return Response({"detail": "Missing repo or PR number."}, status=status.HTTP_400_BAD_REQUEST)
 
     review = Review.objects.create(repo=repo, pr_number=pr_number, trigger="webhook")
+    run_review_in_background(review.pk)
+    return Response({"review_id": review.pk}, status=status.HTTP_202_ACCEPTED)
+
+
+def _handle_comment_command(payload: dict):
+    """Run a review when a PR comment invokes the command (e.g. `/prcheck`)."""
+    if payload.get("action") != "created":
+        return Response({"ignored": True})
+    issue = payload.get("issue") or {}
+    if "pull_request" not in issue:  # only PR conversations, not plain issues
+        return Response({"ignored": True})
+
+    prefix = str(getattr(settings, "PRCHECK_COMMAND_PREFIX", "/prcheck")).lower()
+    body = str((payload.get("comment") or {}).get("body") or "").strip().lower()
+    if body != prefix and not body.startswith(prefix + " "):
+        return Response({"ignored": True})
+
+    # Only "review" (or the bare prefix) is a valid command today.
+    subcommand = body[len(prefix):].strip().split()
+    if subcommand and subcommand[0] != "review":
+        return Response({"detail": "Unknown command."}, status=status.HTTP_400_BAD_REQUEST)
+
+    repo = str((payload.get("repository") or {}).get("full_name") or "")
+    pr_number = issue.get("number")
+    if not repo or not isinstance(pr_number, int):
+        return Response({"detail": "Missing repo or PR number."}, status=status.HTTP_400_BAD_REQUEST)
+
+    review = Review.objects.create(repo=repo, pr_number=pr_number, trigger="command")
     run_review_in_background(review.pk)
     return Response({"review_id": review.pk}, status=status.HTTP_202_ACCEPTED)
