@@ -13,7 +13,7 @@ from . import github_client as gh
 from . import services
 from .adversary import run_adversary
 from .budget import Budget
-from .llm import Completer, structured_call
+from .llm import Completer, _adapt_reasoning_payload, structured_call
 from .models import Review
 from .reviewer import build_review_shards, merge_review_results
 from .schema import REVIEWER_SCHEMA, SchemaError, validate
@@ -191,6 +191,16 @@ class LLMTests(TestCase):
         result = structured_call(Completer(), Budget(), session="reviewer",
                                  system_prompt="s", prompt="p", schema=REVIEWER_SCHEMA)
         self.assertIsNone(result)
+
+    def test_reasoning_payload_adaptation(self):
+        base = {"model": "gpt-5.2", "temperature": 0, "max_tokens": 4096,
+                "response_format": {"type": "json_object"}}
+        adapted = _adapt_reasoning_payload(
+            base, "openai HTTP 400: Unsupported parameter: 'max_tokens'. Use 'max_completion_tokens'.")
+        self.assertIn("max_completion_tokens", adapted)
+        self.assertNotIn("max_tokens", adapted)
+        # An unrelated 400 is not masked by a retry.
+        self.assertIsNone(_adapt_reasoning_payload(base, "openai HTTP 400: bad content filter"))
 
     @override_settings(**REVIEW_SETTINGS)
     def test_retry_on_invalid_then_success(self):

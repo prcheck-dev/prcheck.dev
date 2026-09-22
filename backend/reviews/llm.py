@@ -131,7 +131,16 @@ class Completer:
         else:
             url = f"{base}/chat/completions"
             headers = {"authorization": f"Bearer {api_key}", "content-type": "application/json"}
-        raw = self._post(url, payload, headers=headers, provider="openai")
+        try:
+            raw = self._post(url, payload, headers=headers, provider="openai")
+        except RuntimeError as exc:
+            # Reasoning models (o-series, gpt-5.x) reject `max_tokens` and a
+            # non-default `temperature`, and sometimes `response_format`. Adapt
+            # the payload once from the provider's own 400 message and retry.
+            adjusted = _adapt_reasoning_payload(payload, str(exc))
+            if adjusted is None:
+                raise
+            raw = self._post(url, adjusted, headers=headers, provider="openai")
         data = json.loads(raw)
         choices = data.get("choices") or []
         if not choices:
@@ -175,6 +184,28 @@ class Completer:
                     raise last_error from exc
             time.sleep(min(30.0, 2.0 ** attempt))
         raise last_error or RuntimeError(f"{provider} request failed")
+
+
+def _adapt_reasoning_payload(payload: dict, error: str) -> dict | None:
+    """Return a payload adjusted for a reasoning model, or None if unrelated.
+
+    Only triggers on the specific parameter complaints these models raise, so a
+    genuine 400 (bad request) is not masked by a blind retry.
+    """
+    err = error.casefold()
+    changed = False
+    new = dict(payload)
+    if "max_completion_tokens" in err or ("max_tokens" in err and "unsupported" in err) \
+            or "'max_tokens'" in err:
+        new["max_completion_tokens"] = new.pop("max_tokens", None) or 4096
+        changed = True
+    if "temperature" in err:
+        new.pop("temperature", None)
+        changed = True
+    if "response_format" in err:
+        new.pop("response_format", None)
+        changed = True
+    return new if changed else None
 
 
 def _extract_json(text: str) -> dict:
