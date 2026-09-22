@@ -254,10 +254,9 @@ PRCHECK_REVIEW_MAX_WORKERS = env.int("PRCHECK_REVIEW_MAX_WORKERS", default=4)
 PRCHECK_REVIEW_MODE = env("PRCHECK_REVIEW_MODE", default="fast")
 PRCHECK_DEEP_VERIFY = env.bool("PRCHECK_DEEP_VERIFY", default=True)
 PRCHECK_DEEP_MAX_FILES = env.int("PRCHECK_DEEP_MAX_FILES", default=40)
-# Include a changed file's full text as context only when it fits this cap;
-# larger files fall back to diff-only (over-large context hurts recall and, on
-# reasoning models, exhausts the output budget).
-PRCHECK_DEEP_FILE_BYTES = env.int("PRCHECK_DEEP_FILE_BYTES", default=24000)
+# A changed file's full text is included as context (truncated to this cap). File
+# context is the main measured recall lever, so keep it generous.
+PRCHECK_DEEP_FILE_BYTES = env.int("PRCHECK_DEEP_FILE_BYTES", default=64000)
 # Show a GitHub check run ("prcheck / review") that goes in-progress -> pass/fail.
 PRCHECK_ENABLE_CHECKS = env.bool("PRCHECK_ENABLE_CHECKS", default=True)
 # PR comment that triggers a review, e.g. "/prcheck" or "/prcheck review".

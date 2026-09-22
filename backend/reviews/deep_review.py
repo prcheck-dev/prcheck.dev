@@ -126,14 +126,13 @@ def run_deep_review(
     def _generate(block):
         path, block_diff = block
         content = file_contents.get(path or "", "")
-        # Research: over-large context redirects attention from simpler issues and
-        # (on reasoning models) exhausts the output budget. Include the file only
-        # when it fits the cap; otherwise rely on the diff's own hunk context.
-        include = content and len(content) <= ctx_limit
+        # File context is the main recall lever (measured), so always include it,
+        # truncated to a generous cap rather than omitted — the reasoning-budget
+        # and turn-budget fixes make large context safe now.
         prompt = (
             f"PR title: {pr_title}\nFile: {path}\n\n"
             f"Diff for this file:\n{_fence(block_diff, diff_limit)}\n\n"
-            + (f"Full current file (context only):\n{_fence(content, ctx_limit)}\n" if include else "")
+            + (f"Full current file (context only):\n{_fence(content, ctx_limit)}\n" if content else "")
         )
         return structured_call(
             completer, budget, session="deep-generate",
