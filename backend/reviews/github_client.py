@@ -117,6 +117,17 @@ class GitHubAPI:
         rows = self.list_pages(f"/repos/{self.repo}/pulls/{pr_number}/files")
         return [row for row in rows if isinstance(row, dict)]
 
+    def file_content(self, path: str, ref: str) -> str:
+        """Return a file's raw text at ``ref`` (empty string if unavailable)."""
+        from urllib.parse import quote
+        try:
+            return self.get_text(
+                f"/repos/{self.repo}/contents/{quote(path)}?ref={ref}",
+                accept="application/vnd.github.raw",
+            )
+        except GitHubAPIError:
+            return ""  # binary, too large, or missing — fall back to diff-only
+
 
 @dataclass(frozen=True)
 class PullSnapshot:

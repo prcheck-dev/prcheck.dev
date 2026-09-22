@@ -67,6 +67,26 @@ ADVERSARY_SCHEMA: dict = {
 }
 
 
+VERIFY_SCHEMA: dict = {
+    "type": "object",
+    "required": ["results"],
+    "properties": {
+        "results": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["index", "keep"],
+                "properties": {
+                    "index": {"type": "integer"},
+                    "keep": {"type": "boolean"},
+                    "reason": {"type": "string"},
+                },
+            },
+        }
+    },
+}
+
+
 class SchemaError(ValueError):
     """Raised when model output does not match a schema."""
 

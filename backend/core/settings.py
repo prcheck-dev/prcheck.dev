@@ -249,6 +249,12 @@ PRCHECK_LLM_MAX_RETRIES = env.int("PRCHECK_LLM_MAX_RETRIES", default=4)
 # Review behaviour
 PRCHECK_ENABLE_ADVERSARY = env.bool("PRCHECK_ENABLE_ADVERSARY", default=True)
 PRCHECK_REVIEW_MAX_WORKERS = env.int("PRCHECK_REVIEW_MAX_WORKERS", default=4)
+# "fast" = precision-tuned single/size-sharded pass; "deep" = per-file
+# issue-list generate + verify (higher recall, more model calls).
+PRCHECK_REVIEW_MODE = env("PRCHECK_REVIEW_MODE", default="fast")
+PRCHECK_DEEP_VERIFY = env.bool("PRCHECK_DEEP_VERIFY", default=True)
+PRCHECK_DEEP_MAX_FILES = env.int("PRCHECK_DEEP_MAX_FILES", default=40)
+PRCHECK_DEEP_FILE_BYTES = env.int("PRCHECK_DEEP_FILE_BYTES", default=60000)
 # Show a GitHub check run ("prcheck / review") that goes in-progress -> pass/fail.
 PRCHECK_ENABLE_CHECKS = env.bool("PRCHECK_ENABLE_CHECKS", default=True)
 # PR comment that triggers a review, e.g. "/prcheck" or "/prcheck review".

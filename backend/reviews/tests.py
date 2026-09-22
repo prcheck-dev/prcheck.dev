@@ -253,6 +253,58 @@ class RunReviewTests(TestCase):
 
 
 # --------------------------------------------------------------------------- #
+# Deep review (per-file generate + verify)
+# --------------------------------------------------------------------------- #
+def _deep_fake(keep_only_first=True):
+    def _complete(self, system_prompt, prompt, *, max_tokens=None):
+        self.last_usage = {"provider": "fake", "total_tokens": 10}
+        if "verifier" in system_prompt:  # verify system prompt only
+            idxs = sorted({int(m) for m in re.findall(r"\[(\d+)\]", prompt)})
+            results = [{"index": i, "keep": (i == 0 or not keep_only_first), "reason": "x"} for i in idxs]
+            return json.dumps({"results": results}), self.last_usage
+        m = re.search(r"File: (\S+)", prompt)
+        path = m.group(1) if m else "a.py"
+        return json.dumps({"findings": [{"text": f"issue in {path}", "path": path,
+                                         "line": 2, "severity": "high", "category": "bug",
+                                         "confidence": 0.8}]}), self.last_usage
+    return _complete
+
+
+_TWO_FILE_DIFF = (
+    "diff --git a/a.py b/a.py\n@@ -1 +1,2 @@\n+bad1\n"
+    "diff --git a/b.py b/b.py\n@@ -1 +1,2 @@\n+bad2\n"
+)
+
+import re  # noqa: E402  (used by _deep_fake)
+
+
+@override_settings(**REVIEW_SETTINGS)
+class DeepReviewTests(TestCase):
+    def test_generate_per_file_then_verify_filters(self):
+        from .deep_review import run_deep_review
+        with mock.patch.object(Completer, "complete", _deep_fake(keep_only_first=True)):
+            result = run_deep_review(
+                Completer(), Budget(), pr_title="t", pr_url="u",
+                changed_files=[{"path": "a.py"}, {"path": "b.py"}],
+                diff_text=_TWO_FILE_DIFF, file_contents={"a.py": "x=1", "b.py": "y=2"},
+            )
+        # 2 files generate 2 candidates; verify keeps only index 0.
+        self.assertEqual(len(result["findings"]), 1)
+        self.assertEqual(result["_generated"], 2)
+
+    @override_settings(PRCHECK_DEEP_VERIFY=False)
+    def test_verify_disabled_keeps_all(self):
+        from .deep_review import run_deep_review
+        with mock.patch.object(Completer, "complete", _deep_fake()):
+            result = run_deep_review(
+                Completer(), Budget(), pr_title="t", pr_url="u",
+                changed_files=[{"path": "a.py"}, {"path": "b.py"}],
+                diff_text=_TWO_FILE_DIFF, file_contents={},
+            )
+        self.assertEqual(len(result["findings"]), 2)
+
+
+# --------------------------------------------------------------------------- #
 # GitHub App auth
 # --------------------------------------------------------------------------- #
 class GitHubAppTests(TestCase):

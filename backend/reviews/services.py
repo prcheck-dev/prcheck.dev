@@ -17,6 +17,7 @@ from django.db import connection
 from . import adversary as adversary_mod
 from . import github_app
 from . import github_client as gh
+from .deep_review import run_deep_review
 from .budget import Budget, BudgetExhausted
 from .llm import Completer
 from .models import Finding, Review
@@ -77,28 +78,10 @@ def run_review(review_id: int) -> Review:
     if not snapshot.diff_text.strip():
         return _finalize(review, api, snapshot, findings=[], degraded=False, check_run_id=check_run_id)
 
-    # -- primary reviewer over shards (concurrent) -------------------------- #
-    shards = build_review_shards(snapshot.changed_files, snapshot.diff_text)
-    max_workers = min(len(shards), int(_conf("PRCHECK_REVIEW_MAX_WORKERS", 4)))
-
-    def _review_shard(shard):
-        return run_reviewer(
-            completer, budget,
-            pr_title=snapshot.title, pr_url=snapshot.url,
-            changed_files=shard.changed_files, diff_text=shard.diff_text,
-        )
-
-    try:
-        if len(shards) == 1:
-            results = [_review_shard(shards[0])]
-        else:
-            with ThreadPoolExecutor(max_workers=max_workers) as pool:
-                results = list(pool.map(_review_shard, shards))
-    except BudgetExhausted as exc:
-        LOGGER.warning("reviews_budget_exhausted review=%s %s", review.pk, exc)
-        results = []
-
-    merged = merge_review_results(results)
+    if str(_conf("PRCHECK_REVIEW_MODE", "fast")).lower() == "deep":
+        merged = _run_deep(api, completer, budget, review, snapshot)
+    else:
+        merged = _run_fast(completer, budget, review, snapshot)
     degraded = merged is None
     findings = list(merged.get("findings") or []) if merged else []
 
@@ -120,6 +103,51 @@ def run_review(review_id: int) -> Review:
         adversarial_verdict=adversarial_verdict, usage=budget.as_dict(),
         check_run_id=check_run_id,
     )
+
+
+def _run_fast(completer, budget, review, snapshot):
+    """Precision-tuned single/size-sharded reviewer (the original path)."""
+    shards = build_review_shards(snapshot.changed_files, snapshot.diff_text)
+    max_workers = min(len(shards), int(_conf("PRCHECK_REVIEW_MAX_WORKERS", 4)))
+
+    def _review_shard(shard):
+        return run_reviewer(
+            completer, budget, pr_title=snapshot.title, pr_url=snapshot.url,
+            changed_files=shard.changed_files, diff_text=shard.diff_text,
+        )
+
+    try:
+        if len(shards) == 1:
+            results = [_review_shard(shards[0])]
+        else:
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                results = list(pool.map(_review_shard, shards))
+    except BudgetExhausted as exc:
+        LOGGER.warning("reviews_budget_exhausted review=%s %s", review.pk, exc)
+        results = []
+    return merge_review_results(results)
+
+
+def _run_deep(api, completer, budget, review, snapshot):
+    """High-recall per-file issue-list generation + verification."""
+    # Fetch the full text of changed files (bounded) so the generator can reason
+    # about null-derefs, types, and interfaces beyond the diff hunks.
+    file_contents = {}
+    if api.enabled and snapshot.head_sha:
+        max_files = int(_conf("PRCHECK_DEEP_MAX_FILES", 40))
+        for item in snapshot.changed_files[:max_files]:
+            path = item.get("path")
+            if path and item.get("status") not in {"removed", "deleted"}:
+                file_contents[path] = api.file_content(path, snapshot.head_sha)
+    try:
+        return run_deep_review(
+            completer, budget, pr_title=snapshot.title, pr_url=snapshot.url,
+            changed_files=snapshot.changed_files, diff_text=snapshot.diff_text,
+            file_contents=file_contents,
+        )
+    except BudgetExhausted as exc:
+        LOGGER.warning("reviews_budget_exhausted review=%s %s", review.pk, exc)
+        return None
 
 
 def _finalize(review, api, snapshot, *, findings, degraded,
