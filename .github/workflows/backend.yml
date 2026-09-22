@@ -21,6 +21,9 @@ concurrency:
   group: backend-${{ github.ref }}
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 env:
   AZURE_RESOURCE_GROUP: prcheck-dev-rg
   ACR_NAME: prcheckdevacr0108f4
@@ -37,6 +40,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
       - name: Install dependencies
         working-directory: backend
         run: |
@@ -57,12 +62,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Deploy is skipped cleanly (green run) until AZURE_CREDENTIALS is set, so a
+      # fresh clone without secrets does not report a red pipeline.
+      - name: Check for Azure credentials
+        id: gate
+        env:
+          AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+        run: |
+          if [ -n "$AZURE_CREDENTIALS" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Deploy skipped::AZURE_CREDENTIALS secret is not set; skipping deploy. Add it to enable deployment."
+          fi
+
       - name: Azure login
+        if: steps.gate.outputs.ready == 'true'
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Build image in ACR (tagged with commit SHA)
+        if: steps.gate.outputs.ready == 'true'
         run: |
           az acr build -r "$ACR_NAME" \
             -t "$IMAGE_NAME:${{ github.sha }}" \
@@ -70,6 +91,7 @@ jobs:
             ./backend
 
       - name: Roll out new image to the container app
+        if: steps.gate.outputs.ready == 'true'
         run: |
           az containerapp update \
             -n "$CONTAINERAPP_NAME" -g "$AZURE_RESOURCE_GROUP" \
@@ -77,7 +99,11 @@ jobs:
 
       - name: Run database migrations
         # On push we always migrate; on manual runs it is opt-out via the input.
-        if: github.event_name == 'push' || inputs.run_migrations
+        # Tolerate a missing migration job so a not-yet-provisioned env stays green.
+        if: steps.gate.outputs.ready == 'true' && (github.event_name == 'push' || inputs.run_migrations)
         run: |
-          az containerapp job start \
-            -n "$MIGRATION_JOB" -g "$AZURE_RESOURCE_GROUP"
+          if az containerapp job show -n "$MIGRATION_JOB" -g "$AZURE_RESOURCE_GROUP" >/dev/null 2>&1; then
+            az containerapp job start -n "$MIGRATION_JOB" -g "$AZURE_RESOURCE_GROUP"
+          else
+            echo "::warning title=Migrations skipped::Job $MIGRATION_JOB not found; run ./infra/setup-infra.sh to create it."
+          fi

@@ -13,9 +13,13 @@ concurrency:
   group: frontend-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   build-deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -44,3 +48,6 @@ jobs:
           action: upload
           app_location: frontend/dist
           skip_app_build: true # we already built with Vite above
+          # Keep the run green before the token is configured; deploy starts
+          # automatically once the secret is added.
+          skip_deploy_on_missing_secrets: true
