@@ -28,5 +28,5 @@ USER appuser
 
 EXPOSE 8000
 
-# Migrations are run as a separate step (release job), not on every boot.
-CMD ["sh", "-c", "gunicorn core.wsgi:application --bind 0.0.0.0:${PORT} --workers 3 --timeout 60 --access-logfile - --error-logfile -"]
+# entrypoint.sh migrates, then execs gunicorn.
+CMD ["sh", "./entrypoint.sh"]
