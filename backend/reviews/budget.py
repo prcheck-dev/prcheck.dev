@@ -13,9 +13,11 @@ from threading import Lock
 
 @dataclass(frozen=True)
 class Budgets:
-    max_model_turns: int = 24
-    max_tokens: int = 2_000_000
-    max_wall_clock_s: float = 900.0
+    # Deep mode makes one generate call per changed file plus a verify pass, so
+    # the turn budget must comfortably exceed the per-PR file cap.
+    max_model_turns: int = 300
+    max_tokens: int = 4_000_000
+    max_wall_clock_s: float = 1800.0
 
 
 class BudgetExhausted(RuntimeError):

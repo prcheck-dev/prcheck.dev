@@ -112,6 +112,13 @@ def run_deep_review(
     if not blocks:
         blocks = [(None, diff_text)]
 
+    # Bound the number of per-file generate calls on very large PRs (e.g. a
+    # 100+ file refactor): review the most-changed files first so we stay within
+    # budget instead of degrading to zero findings.
+    max_files = int(_conf("PRCHECK_DEEP_MAX_FILES", 40))
+    if len(blocks) > max_files:
+        blocks = sorted(blocks, key=lambda b: len(b[1]), reverse=True)[:max_files]
+
     ctx_limit = int(_conf("PRCHECK_DEEP_FILE_BYTES", 60_000))
     diff_limit = int(_conf("PRCHECK_REVIEW_DIFF_LIMIT", 120_000))
     max_workers = max(1, int(_conf("PRCHECK_REVIEW_MAX_WORKERS", 4)))
