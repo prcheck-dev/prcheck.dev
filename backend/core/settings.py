@@ -227,7 +227,7 @@ GITHUB_OAUTH_SCOPE = env("GITHUB_OAUTH_SCOPE")
 
 # LLM backend: "anthropic" (default), "openai" (OpenAI-compatible incl. Azure
 # OpenAI), or "deterministic" (no model call; every review degrades cleanly).
-PRCHECK_LLM_BACKEND = env("PRCHECK_LLM_BACKEND", default="anthropic")
+PRCHECK_LLM_BACKEND = env("PRCHECK_LLM_BACKEND", default="azure-ai-foundry")
 
 # Anthropic
 ANTHROPIC_API_KEY = env("ANTHROPIC_API_KEY", default="")
@@ -239,6 +239,12 @@ PRCHECK_OPENAI_API_KEY = env("PRCHECK_OPENAI_API_KEY", default="")
 PRCHECK_OPENAI_BASE_URL = env("PRCHECK_OPENAI_BASE_URL", default="https://api.openai.com/v1")
 PRCHECK_OPENAI_MODEL = env("PRCHECK_OPENAI_MODEL", default="gpt-4o")
 PRCHECK_OPENAI_API_VERSION = env("PRCHECK_OPENAI_API_VERSION", default="")
+# Microsoft Foundry Models / Azure AI Foundry. The deployment name goes in the
+# model field; v1 endpoints normally leave API_VERSION empty.
+PRCHECK_AZURE_AI_FOUNDRY_API_KEY = env("PRCHECK_AZURE_AI_FOUNDRY_API_KEY", default="")
+PRCHECK_AZURE_AI_FOUNDRY_BASE_URL = env("PRCHECK_AZURE_AI_FOUNDRY_BASE_URL", default="")
+PRCHECK_AZURE_AI_FOUNDRY_MODEL = env("PRCHECK_AZURE_AI_FOUNDRY_MODEL", default="")
+PRCHECK_AZURE_AI_FOUNDRY_AUTH = env("PRCHECK_AZURE_AI_FOUNDRY_AUTH", default="api-key")
 
 # Model-call tuning
 PRCHECK_LLM_MAX_TOKENS = env.int("PRCHECK_LLM_MAX_TOKENS", default=4096)
@@ -247,16 +253,29 @@ PRCHECK_LLM_TIMEOUT_S = env.int("PRCHECK_LLM_TIMEOUT_S", default=120)
 PRCHECK_LLM_MAX_RETRIES = env.int("PRCHECK_LLM_MAX_RETRIES", default=4)
 
 # Review behaviour
+PRCHECK_REPO_GUIDANCE = env.bool("PRCHECK_REPO_GUIDANCE", default=True)
+PRCHECK_REPO_GUIDANCE_BYTES = env.int("PRCHECK_REPO_GUIDANCE_BYTES", default=24000)
+PRCHECK_CI_GATE_APPROVAL = env.bool("PRCHECK_CI_GATE_APPROVAL", default=True)
 PRCHECK_ENABLE_ADVERSARY = env.bool("PRCHECK_ENABLE_ADVERSARY", default=True)
 PRCHECK_REVIEW_MAX_WORKERS = env.int("PRCHECK_REVIEW_MAX_WORKERS", default=4)
+# Extra globs to skip on top of the built-in lockfile/generated/vendored list.
+PRCHECK_REVIEW_IGNORE_GLOBS = env.list("PRCHECK_REVIEW_IGNORE_GLOBS", default=[])
 # "fast" = precision-tuned single/size-sharded pass; "deep" = per-file
 # issue-list generate + verify (higher recall, more model calls).
 PRCHECK_REVIEW_MODE = env("PRCHECK_REVIEW_MODE", default="fast")
 PRCHECK_DEEP_VERIFY = env.bool("PRCHECK_DEEP_VERIFY", default=True)
 PRCHECK_DEEP_MAX_FILES = env.int("PRCHECK_DEEP_MAX_FILES", default=40)
+# Generated candidates below this self-reported confidence never reach verify.
+PRCHECK_DEEP_MIN_CONFIDENCE = env.float("PRCHECK_DEEP_MIN_CONFIDENCE", default=0.3)
 # A changed file's full text is included as context (truncated to this cap). File
 # context is the main measured recall lever, so keep it generous.
 PRCHECK_DEEP_FILE_BYTES = env.int("PRCHECK_DEEP_FILE_BYTES", default=64000)
+# Approximate LSP getDefinition/typeDefinition for deep review without cloning.
+PRCHECK_DEEP_RELATED_DEFINITIONS = env.bool("PRCHECK_DEEP_RELATED_DEFINITIONS", default=True)
+PRCHECK_DEEP_MAX_RELATED_DEFINITIONS = env.int("PRCHECK_DEEP_MAX_RELATED_DEFINITIONS", default=12)
+PRCHECK_DEEP_RELATED_DEFINITION_BYTES = env.int("PRCHECK_DEEP_RELATED_DEFINITION_BYTES", default=16000)
+PRCHECK_DEEP_RELATED_CONTEXT_BYTES = env.int("PRCHECK_DEEP_RELATED_CONTEXT_BYTES", default=32000)
+PRCHECK_DEEP_VERIFY_CONTEXT_BYTES = env.int("PRCHECK_DEEP_VERIFY_CONTEXT_BYTES", default=80000)
 # Show a GitHub check run ("prcheck / review") that goes in-progress -> pass/fail.
 PRCHECK_ENABLE_CHECKS = env.bool("PRCHECK_ENABLE_CHECKS", default=True)
 # PR comment that triggers a review, e.g. "/prcheck" or "/prcheck review".
@@ -283,7 +302,9 @@ else:
 
 # Publishing findings back to the PR (sticky summary + inline comments).
 PRCHECK_PUBLISH_REVIEWS = env.bool("PRCHECK_PUBLISH_REVIEWS", default=False)
-PRCHECK_MAX_INLINE_COMMENTS = env.int("PRCHECK_MAX_INLINE_COMMENTS", default=40)
+PRCHECK_MAX_INLINE_COMMENTS = env.int("PRCHECK_MAX_INLINE_COMMENTS", default=15)
+# Findings below this severity appear only in the summary, never inline.
+PRCHECK_INLINE_MIN_SEVERITY = env("PRCHECK_INLINE_MIN_SEVERITY", default="medium")
 
 
 # --------------------------------------------------------------------------- #

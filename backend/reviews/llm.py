@@ -9,6 +9,7 @@ Backends (``PRCHECK_LLM_BACKEND``):
   * ``anthropic``          Anthropic Messages API (default)
   * ``openai``             OpenAI-compatible /chat/completions (OpenAI, Azure
                            OpenAI, Fireworks, Together, Martian, ...)
+  * ``azure-ai-foundry``  Azure AI Foundry Models /openai/v1 endpoint
   * ``deterministic``      no external call; always degrades (used when no key
                            is configured, and in tests)
 """
@@ -36,12 +37,16 @@ def _conf(name: str, default=None):
 
 
 def resolve_backend() -> str:
-    backend = str(_conf("PRCHECK_LLM_BACKEND", "anthropic")).strip().lower()
+    backend = str(_conf("PRCHECK_LLM_BACKEND", "azure-ai-foundry")).strip().lower()
     # Fall back to a no-op backend when the chosen one has no credentials, so a
     # missing key degrades cleanly instead of raising on every review.
     if backend == "anthropic" and not _conf("ANTHROPIC_API_KEY"):
         return "deterministic"
     if backend in {"openai", "openai-compatible"} and not _conf("PRCHECK_OPENAI_API_KEY"):
+        return "deterministic"
+    if backend == "azure-ai-foundry" and not (
+        _conf("PRCHECK_AZURE_AI_FOUNDRY_API_KEY") or _conf("PRCHECK_OPENAI_API_KEY")
+    ):
         return "deterministic"
     return backend
 
@@ -59,10 +64,10 @@ class Completer:
     def complete(self, system_prompt: str, prompt: str, *, max_tokens: int | None = None):
         """Return ``(text, usage_dict)``."""
         self.last_usage: dict = {}
-        backend = str(_conf("PRCHECK_LLM_BACKEND", "anthropic")).strip().lower()
+        backend = str(_conf("PRCHECK_LLM_BACKEND", "azure-ai-foundry")).strip().lower()
         if backend == "anthropic":
             return self._complete_anthropic(system_prompt, prompt, max_tokens=max_tokens)
-        if backend in {"openai", "openai-compatible"}:
+        if backend in {"openai", "openai-compatible", "azure-ai-foundry"}:
             return self._complete_openai(system_prompt, prompt, max_tokens=max_tokens)
         raise RuntimeError(f"unsupported PRCHECK_LLM_BACKEND: {backend}")
 
@@ -111,9 +116,22 @@ class Completer:
 
     # -- OpenAI-compatible (incl. Azure OpenAI) ----------------------------- #
     def _complete_openai(self, system_prompt, prompt, *, max_tokens=None):
-        api_key = _conf("PRCHECK_OPENAI_API_KEY")
-        base = str(_conf("PRCHECK_OPENAI_BASE_URL", "https://api.openai.com/v1")).rstrip("/")
-        model = _conf("PRCHECK_OPENAI_MODEL") or "gpt-4o"
+        backend = str(_conf("PRCHECK_LLM_BACKEND", "")).strip().lower()
+        is_foundry = backend == "azure-ai-foundry"
+        provider_name = "azure-ai-foundry" if is_foundry else "openai"
+        api_key = (
+            _conf("PRCHECK_AZURE_AI_FOUNDRY_API_KEY") or _conf("PRCHECK_OPENAI_API_KEY")
+            if is_foundry else _conf("PRCHECK_OPENAI_API_KEY")
+        )
+        base = str(
+            _conf("PRCHECK_AZURE_AI_FOUNDRY_BASE_URL")
+            if is_foundry and _conf("PRCHECK_AZURE_AI_FOUNDRY_BASE_URL")
+            else _conf("PRCHECK_OPENAI_BASE_URL", "https://api.openai.com/v1")
+        ).rstrip("/")
+        model = (
+            _conf("PRCHECK_AZURE_AI_FOUNDRY_MODEL") or _conf("PRCHECK_OPENAI_MODEL")
+            if is_foundry else _conf("PRCHECK_OPENAI_MODEL")
+        ) or "gpt-4o"
         api_version = _conf("PRCHECK_OPENAI_API_VERSION")  # set => Azure OpenAI
         payload = {
             "model": model,
@@ -125,14 +143,18 @@ class Completer:
             "max_tokens": max_tokens or int(_conf("PRCHECK_LLM_MAX_TOKENS", 4096)),
             "response_format": {"type": "json_object"},
         }
-        if api_version:  # Azure: api-key header + api-version query, no /v1
+        if api_version:  # Azure deployment-style endpoint: api-key + api-version
             url = f"{base}/chat/completions?api-version={api_version}"
             headers = {"api-key": api_key, "content-type": "application/json"}
         else:
             url = f"{base}/chat/completions"
-            headers = {"authorization": f"Bearer {api_key}", "content-type": "application/json"}
+            auth_mode = str(_conf("PRCHECK_AZURE_AI_FOUNDRY_AUTH", "api-key")).strip().lower()
+            if is_foundry and auth_mode in {"api-key", "apikey", "key"}:
+                headers = {"api-key": api_key, "content-type": "application/json"}
+            else:
+                headers = {"authorization": f"Bearer {api_key}", "content-type": "application/json"}
         try:
-            raw = self._post(url, payload, headers=headers, provider="openai")
+            raw = self._post(url, payload, headers=headers, provider=provider_name)
         except RuntimeError as exc:
             # Reasoning models (o-series, gpt-5.x) reject `max_tokens` and a
             # non-default `temperature`, and sometimes `response_format`. Adapt
@@ -141,7 +163,7 @@ class Completer:
             if adjusted is None:
                 raise
             payload = adjusted
-            raw = self._post(url, payload, headers=headers, provider="openai")
+            raw = self._post(url, payload, headers=headers, provider=provider_name)
         data = json.loads(raw)
         choices = data.get("choices") or []
         if not choices:
@@ -156,7 +178,7 @@ class Completer:
             cap = int(bumped.get("max_completion_tokens") or bumped.get("max_tokens") or 4096)
             bumped.pop("max_tokens", None)
             bumped["max_completion_tokens"] = min(cap * 3, 32000)
-            raw = self._post(url, bumped, headers=headers, provider="openai")
+            raw = self._post(url, bumped, headers=headers, provider=provider_name)
             data = json.loads(raw)
             choices = data.get("choices") or []
             text = ((choices[0].get("message") or {}).get("content") or "") if choices else ""
@@ -165,7 +187,7 @@ class Completer:
         prompt_tokens = int(usage.get("prompt_tokens") or 0)
         completion_tokens = int(usage.get("completion_tokens") or 0)
         self.last_usage = {
-            "provider": "openai",
+            "provider": "azure-ai-foundry" if is_foundry else "openai",
             "model": model,
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,

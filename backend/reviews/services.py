@@ -3,7 +3,8 @@
 Mirrors shipwright's pipeline shape (map -> review -> adversarial -> verdict ->
 publish) trimmed to a code-review agent. Reviewer shards run concurrently on a
 thread pool sharing one budget; the adversarial pass can only tighten the
-verdict on substantiated evidence.
+verdict on substantiated evidence. Every finding is grounded against the diff
+in code before it is stored, so the model cannot publish off-diff noise.
 """
 from __future__ import annotations
 
@@ -17,12 +18,14 @@ from django.db import connection
 from . import adversary as adversary_mod
 from . import github_app
 from . import github_client as gh
-from .deep_review import run_deep_review
 from .budget import Budget, BudgetExhausted
+from .deep_review import run_deep_review
+from .diffs import filter_reviewable, line_map, number_diff
+from .findings import dedupe_findings, ground_findings, sort_findings
 from .llm import Completer
 from .models import Finding, Review
 from .reviewer import build_review_shards, merge_review_results, run_reviewer
-from .verdict import BLOCK, compute_verdict
+from .verdict import APPROVE, APPROVE_COND, compute_verdict
 
 LOGGER = logging.getLogger("reviews.services")
 
@@ -74,46 +77,85 @@ def run_review(review_id: int) -> Review:
 
     # Show an in-progress check on the PR while the review runs.
     check_run_id = gh.create_check_run(api, snapshot.head_sha) if _conf("PRCHECK_ENABLE_CHECKS", True) else None
+    ci_evidence = (
+        gh.fetch_ci_evidence(api, snapshot.head_sha)
+        if _conf("PRCHECK_CI_GATE_APPROVAL", True) else None
+    )
 
-    if not snapshot.diff_text.strip():
-        return _finalize(review, api, snapshot, findings=[], degraded=False, check_run_id=check_run_id)
+    changed_files, review_diff, skipped = filter_reviewable(
+        snapshot.changed_files, snapshot.diff_text,
+        extra_globs=_conf("PRCHECK_REVIEW_IGNORE_GLOBS", ()) or (),
+    )
+    if skipped:
+        LOGGER.info("reviews_skipped_files review=%s count=%d", review.pk, len(skipped))
+    if not review_diff.strip():
+        return _finalize(review, api, snapshot, findings=[], degraded=False,
+                         ci_evidence=ci_evidence, check_run_id=check_run_id)
+
+    project_guidance = ""
+    if _conf("PRCHECK_REPO_GUIDANCE", True):
+        project_guidance = gh.fetch_repository_guidance(
+            api,
+            ref=snapshot.base_sha or snapshot.head_sha,
+            changed_paths=[item.get("path", "") for item in changed_files],
+            max_bytes=int(_conf("PRCHECK_REPO_GUIDANCE_BYTES", 24_000)),
+        )
 
     if str(_conf("PRCHECK_REVIEW_MODE", "fast")).lower() == "deep":
-        merged = _run_deep(api, completer, budget, review, snapshot)
+        merged = _run_deep(api, completer, budget, review, snapshot, changed_files, review_diff, project_guidance)
     else:
-        merged = _run_fast(completer, budget, review, snapshot)
+        merged = _run_fast(completer, budget, review, snapshot, changed_files, review_diff, project_guidance)
     degraded = merged is None
-    findings = list(merged.get("findings") or []) if merged else []
+    lines_by_path = line_map(review_diff)
+    findings = ground_findings(list(merged.get("findings") or []) if merged else [], lines_by_path)
 
-    # -- adversarial second pass (verdict-gating only) ---------------------- #
-    adversarial_verdict = None
-    if _conf("PRCHECK_ENABLE_ADVERSARY", True) and snapshot.diff_text.strip():
+    # -- adversarial second pass (can only tighten) ------------------------- #
+    if _conf("PRCHECK_ENABLE_ADVERSARY", True):
         try:
             adv = adversary_mod.run_adversary(
-                completer, budget, diff_text=snapshot.diff_text, review=merged,
+                completer, budget, diff_text=review_diff, review={"findings": findings},
             )
         except BudgetExhausted:
             adv = None
-        if adv is not None:
-            adversarial_verdict = adv.get("verdict")
+        findings = _merge_adversary(findings, adversary_mod.verified_blockers(adv))
 
     return _finalize(
         review, api, snapshot,
-        findings=findings, degraded=degraded,
-        adversarial_verdict=adversarial_verdict, usage=budget.as_dict(),
-        check_run_id=check_run_id,
+        findings=sort_findings(dedupe_findings(findings)), degraded=degraded,
+        usage=budget.as_dict(), ci_evidence=ci_evidence, check_run_id=check_run_id,
     )
 
 
-def _run_fast(completer, budget, review, snapshot):
+def _merge_adversary(findings: list[dict], blockers: list[dict]) -> list[dict]:
+    """Fold verified adversary blockers into the findings.
+
+    A blocker at the location of an existing finding corroborates it and
+    escalates it to critical; otherwise it is added, so a blocked PR always
+    shows the finding that blocked it.
+    """
+    findings = [dict(f) for f in findings]
+    for blocker in blockers:
+        near = next((
+            f for f in findings
+            if f.get("path") == blocker["path"] and abs(int(f.get("line") or 0) - blocker["line"]) <= 3
+        ), None)
+        if near is not None:
+            near["severity"] = "critical"
+        else:
+            findings.append(blocker)
+    return findings
+
+
+def _run_fast(completer, budget, review, snapshot, changed_files, review_diff, project_guidance=""):
     """Precision-tuned single/size-sharded reviewer (the original path)."""
-    shards = build_review_shards(snapshot.changed_files, snapshot.diff_text)
+    shards = build_review_shards(changed_files, number_diff(review_diff))
     max_workers = min(len(shards), int(_conf("PRCHECK_REVIEW_MAX_WORKERS", 4)))
 
     def _review_shard(shard):
         return run_reviewer(
             completer, budget, pr_title=snapshot.title, pr_url=snapshot.url,
             changed_files=shard.changed_files, diff_text=shard.diff_text,
+            project_guidance=project_guidance,
         )
 
     try:
@@ -128,22 +170,35 @@ def _run_fast(completer, budget, review, snapshot):
     return merge_review_results(results)
 
 
-def _run_deep(api, completer, budget, review, snapshot):
+def _run_deep(api, completer, budget, review, snapshot, changed_files, review_diff, project_guidance=""):
     """High-recall per-file issue-list generation + verification."""
     # Fetch the full text of changed files (bounded) so the generator can reason
     # about null-derefs, types, and interfaces beyond the diff hunks.
     file_contents = {}
     if api.enabled and snapshot.head_sha:
         max_files = int(_conf("PRCHECK_DEEP_MAX_FILES", 40))
-        for item in snapshot.changed_files[:max_files]:
+        for item in changed_files[:max_files]:
             path = item.get("path")
             if path and item.get("status") not in {"removed", "deleted"}:
                 file_contents[path] = api.file_content(path, snapshot.head_sha)
+    related_definitions = {}
+    if _conf("PRCHECK_DEEP_RELATED_DEFINITIONS", True):
+        related_definitions = gh.fetch_related_definitions(
+            api,
+            ref=snapshot.head_sha,
+            changed_files=changed_files,
+            file_contents=file_contents,
+            max_files=int(_conf("PRCHECK_DEEP_MAX_FILES", 40)),
+            max_definitions=int(_conf("PRCHECK_DEEP_MAX_RELATED_DEFINITIONS", 12)),
+            max_bytes=int(_conf("PRCHECK_DEEP_RELATED_DEFINITION_BYTES", 16_000)),
+        )
     try:
         return run_deep_review(
             completer, budget, pr_title=snapshot.title, pr_url=snapshot.url,
-            changed_files=snapshot.changed_files, diff_text=snapshot.diff_text,
+            changed_files=changed_files, diff_text=review_diff,
             file_contents=file_contents,
+            related_definitions=related_definitions,
+            project_guidance=project_guidance,
         )
     except BudgetExhausted as exc:
         LOGGER.warning("reviews_budget_exhausted review=%s %s", review.pk, exc)
@@ -151,11 +206,18 @@ def _run_deep(api, completer, budget, review, snapshot):
 
 
 def _finalize(review, api, snapshot, *, findings, degraded,
-              adversarial_verdict=None, usage=None, check_run_id=None) -> Review:
+              usage=None, ci_evidence=None, check_run_id=None) -> Review:
     verdict, conditions = compute_verdict(findings, degraded=degraded)
-    # The adversarial pass can only tighten the verdict.
-    if adversarial_verdict == "BLOCK":
-        verdict = BLOCK
+
+    if ci_evidence and verdict in {APPROVE, APPROVE_COND}:
+        failed = ci_evidence.get("failed") or []
+        pending = ci_evidence.get("pending") or []
+        if failed:
+            conditions.append("CI checks failing: " + ", ".join(failed[:5]))
+        if pending:
+            conditions.append("CI checks pending: " + ", ".join(pending[:5]))
+        if failed or pending:
+            verdict = APPROVE_COND
 
     Finding.objects.filter(review=review).delete()
     Finding.objects.bulk_create([
@@ -166,6 +228,7 @@ def _finalize(review, api, snapshot, *, findings, degraded,
             line=int(f.get("line") or 0),
             severity=str(f.get("severity", "low")),
             category=str(f.get("category", "bug")),
+            suggestion=str(f.get("suggestion") or "")[:5000],
         )
         for f in findings
     ])
@@ -177,11 +240,17 @@ def _finalize(review, api, snapshot, *, findings, degraded,
     review.status = Review.Status.COMPLETED
     review.save(update_fields=["verdict", "conditions", "degraded", "usage", "status", "updated_at"])
 
+    blob_base = _blob_base(snapshot)
     if _conf("PRCHECK_ENABLE_CHECKS", True):
-        gh.complete_check_run(api, check_run_id, verdict, conditions, findings)
+        gh.complete_check_run(api, check_run_id, verdict, conditions, findings, blob_base=blob_base)
 
     if _conf("PRCHECK_PUBLISH_REVIEWS", False) and api.enabled:
-        _publish(review, api, snapshot, findings, verdict, conditions)
+        if _superseded(review):
+            # A later push already started a newer review; publishing this one
+            # would overwrite fresher results with stale ones.
+            LOGGER.info("reviews_publish_skipped_superseded review=%s", review.pk)
+        else:
+            _publish(review, api, snapshot, findings, verdict, conditions, blob_base)
 
     LOGGER.info(
         "reviews_finished review=%s repo=%s pr=%s verdict=%s findings=%d degraded=%s",
@@ -190,14 +259,28 @@ def _finalize(review, api, snapshot, *, findings, degraded,
     return review
 
 
-def _publish(review, api, snapshot, findings, verdict, conditions) -> None:
+def _blob_base(snapshot) -> str:
+    if "/pull/" not in snapshot.url or not snapshot.head_sha:
+        return ""
+    return f"{snapshot.url.split('/pull/')[0]}/blob/{snapshot.head_sha}"
+
+
+def _superseded(review: Review) -> bool:
+    return Review.objects.filter(
+        repo=review.repo, pr_number=review.pr_number, pk__gt=review.pk,
+    ).exists()
+
+
+def _publish(review, api, snapshot, findings, verdict, conditions, blob_base="") -> None:
     try:
         gh.upsert_summary_comment(
-            api, review.pr_number, gh.render_summary(verdict, conditions, findings),
+            api, review.pr_number,
+            gh.render_summary(verdict, conditions, findings, blob_base=blob_base),
         )
         gh.publish_inline_comments(
             api, review.pr_number, snapshot.head_sha, snapshot.diff_text, findings,
-            limit=int(_conf("PRCHECK_MAX_INLINE_COMMENTS", 40)),
+            limit=int(_conf("PRCHECK_MAX_INLINE_COMMENTS", 15)),
+            min_severity=str(_conf("PRCHECK_INLINE_MIN_SEVERITY", "medium")).lower(),
         )
         review.published = True
         review.save(update_fields=["published", "updated_at"])

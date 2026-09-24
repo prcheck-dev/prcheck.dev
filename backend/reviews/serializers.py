@@ -10,7 +10,7 @@ _REPO_RE = re.compile(r"^[\w.-]+/[\w.-]+$")
 class FindingSerializer(serializers.ModelSerializer):
     class Meta:
         model = Finding
-        fields = ("id", "text", "path", "line", "severity", "category")
+        fields = ("id", "text", "path", "line", "severity", "category", "suggestion")
 
 
 class ReviewSerializer(serializers.ModelSerializer):

@@ -71,6 +71,7 @@ class Finding(models.Model):
     line = models.PositiveIntegerField()
     severity = models.CharField(max_length=16, choices=Severity.choices)
     category = models.CharField(max_length=32)
+    suggestion = models.TextField(blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
 

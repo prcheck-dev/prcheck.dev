@@ -23,6 +23,14 @@ CATEGORIES = (
     "speculative",
 )
 
+# Shared by every stage so severities mean the same thing everywhere; the
+# verdict is computed from them, so an inflated severity is a wrong verdict.
+SEVERITY_RUBRIC = """Severity rubric (calibrate honestly; the merge verdict is computed from it):
+- critical: exploitable security hole, data loss/corruption, or a crash/outage on a primary path.
+- high: incorrect behavior users will hit in normal use, or an authentication/authorization weakness.
+- medium: a real bug confined to an edge case, error path, or uncommon input.
+- low: a concrete but minor defect (misleading docstring/comment/message, naming mismatch, a test that does not test what it claims)."""
+
 REVIEWER_SCHEMA: dict = {
     "type": "object",
     "required": ["findings"],
@@ -38,6 +46,8 @@ REVIEWER_SCHEMA: dict = {
                     "line": {"type": "integer"},
                     "severity": {"type": "string", "enum": list(SEVERITIES)},
                     "category": {"type": "string", "enum": list(CATEGORIES)},
+                    "suggestion": {"type": "string"},
+                    "confidence": {"type": "number"},
                 },
             },
         }
@@ -79,6 +89,7 @@ VERIFY_SCHEMA: dict = {
                 "properties": {
                     "index": {"type": "integer"},
                     "keep": {"type": "boolean"},
+                    "severity": {"type": "string", "enum": list(SEVERITIES)},
                     "reason": {"type": "string"},
                 },
             },
