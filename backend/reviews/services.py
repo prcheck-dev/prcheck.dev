@@ -21,7 +21,7 @@ from . import github_app
 from . import github_client as gh
 from .budget import Budget, BudgetExhausted
 from .deep_review import run_deep_review
-from .diffs import filter_reviewable, line_map, number_diff
+from .diffs import diff_blocks, filter_reviewable, line_map, number_diff
 from .findings import dedupe_findings, ground_findings, sort_findings
 from .llm import Completer
 from .models import Finding, Review
@@ -208,6 +208,7 @@ def _run_deep(api, completer, budget, review, snapshot, changed_files, review_di
             max_files=int(_conf("PRCHECK_DEEP_MAX_FILES", 40)),
             max_definitions=int(_conf("PRCHECK_DEEP_MAX_RELATED_DEFINITIONS", 12)),
             max_bytes=int(_conf("PRCHECK_DEEP_RELATED_DEFINITION_BYTES", 16_000)),
+            diff_by_path={path: text for path, text in diff_blocks(review_diff) if path},
         )
     try:
         return run_deep_review(

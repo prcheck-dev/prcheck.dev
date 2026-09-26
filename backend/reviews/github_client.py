@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from urllib.parse import quote
 
 from .diffs import line_map
+from .repo_context import symbols_for_file, targeted_definitions
 from .findings import SEVERITY_RANK, sort_findings
 
 LOGGER = logging.getLogger("reviews.github")
@@ -441,6 +442,7 @@ def fetch_related_definitions(
     max_files: int = 40,
     max_definitions: int = 12,
     max_bytes: int = 16_000,
+    diff_by_path: dict[str, str] | None = None,
 ) -> dict[str, dict[str, str]]:
     """Fetch a small, source-keyed set of definitions related to changed files.
 
@@ -450,9 +452,8 @@ def fetch_related_definitions(
     """
     if not api.enabled or not ref or not file_contents:
         return {}
+    # Without a tree listing only the PR's own changed files can be searched.
     tree_paths = api.repository_tree(ref)
-    if not tree_paths:
-        return {}
 
     selected_by_source: dict[str, list[str]] = {}
     selected: list[str] = []
@@ -468,16 +469,30 @@ def fetch_related_definitions(
                 selected.append(path)
             selected_by_source.setdefault(source, []).append(path)
 
-    contents: dict[str, str] = {}
+    full: dict[str, str] = {}
     for path in selected:
         text = api.file_content(path, ref)
         if text:
-            contents[path] = text[:max_bytes]
-    return {
-        source: {path: contents[path] for path in paths if path in contents}
-        for source, paths in selected_by_source.items()
-        if any(path in contents for path in paths)
-    }
+            full[path] = text
+    result: dict[str, dict[str, str]] = {}
+    # Definitions of the names each file's new lines call, found in the related
+    # files and in the PR's other changed files: the head of a big module rarely
+    # holds the function the diff actually uses.
+    search_space = {**full, **{p: t for p, t in file_contents.items() if t}}
+    for item in changed_files[:max_files]:
+        source = str(item.get("path") or "")
+        if not source or not (diff_by_path or {}).get(source):
+            continue
+        calls = symbols_for_file(diff_by_path[source], file_contents.get(source, ""))
+        others = {p: t for p, t in search_space.items() if p != source}
+        targeted = targeted_definitions(calls, others, max_bytes=max_bytes)
+        if targeted:
+            result[source] = dict(targeted)
+    for source, paths in selected_by_source.items():
+        heads = {path: full[path][:max_bytes] for path in paths if path in full}
+        if heads:
+            result.setdefault(source, {}).update(heads)
+    return result
 
 
 def _is_pr_diff_too_large(exc: GitHubAPIError) -> bool:

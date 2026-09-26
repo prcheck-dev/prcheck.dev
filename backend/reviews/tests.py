@@ -854,6 +854,34 @@ class LLMRetryTests(TestCase):
 
         with mock.patch("reviews.llm.urlopen", _urlopen), mock.patch("reviews.llm.time.sleep"):
             self.assertEqual(Completer()._post("https://llm.test/v1", {}, headers={}, provider="openai"), "ok")
+class RepoContextTests(TestCase):
+    def test_definitions_of_called_names_come_from_other_files(self):
+        from .repo_context import symbols_for_file, targeted_definitions
+        diff = "+++ b/app.ts\n+  await refreshTokens(credentialId, slug);\n+  if (isReady(x)) run();\n"
+        calls = symbols_for_file(diff, "function isReady(x) { return true }")
+        self.assertEqual(calls, ["refreshTokens", "run"])
+        space = {"lib/oauth.ts": "// a\n// b\nexport const refreshTokens = async (userId, slug) => {\n}\n"}
+        found = targeted_definitions(calls, space)
+        self.assertEqual(list(found), ["lib/oauth.ts (definition of refreshTokens)"])
+        self.assertIn("3  export const refreshTokens = async (userId, slug)", found["lib/oauth.ts (definition of refreshTokens)"])
+
+    def test_generic_names_defined_in_many_files_are_skipped(self):
+        from .repo_context import targeted_definitions
+        space = {f"m{i}.py": "def save(self):\n    pass\n" for i in range(3)}
+        self.assertEqual(targeted_definitions(["save"], space), {})
+
+    def test_related_definitions_search_other_changed_files_without_a_tree(self):
+        api = gh.GitHubAPI(repo="o/r", token="t")
+        with mock.patch.object(gh.GitHubAPI, "repository_tree", return_value=[]):
+            result = gh.fetch_related_definitions(
+                api, ref="sha",
+                changed_files=[{"path": "a.py"}, {"path": "b.py"}],
+                file_contents={"a.py": "x = compute_total(order)\n",
+                               "b.py": "def compute_total(order, currency):\n    return 0\n"},
+                diff_by_path={"a.py": "+x = compute_total(order)\n"},
+            )
+        self.assertEqual(list(result), ["a.py"])
+        self.assertIn("def compute_total(order, currency)", result["a.py"]["b.py (definition of compute_total)"])
 
 
 class AdversaryCitationTests(TestCase):
