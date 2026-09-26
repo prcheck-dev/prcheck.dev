@@ -121,11 +121,16 @@ comparisons are approximate. One run per row; treat ±0.02 as noise.
 | Date | Version | Precision | Recall | F1 | Findings/PR |
 |------|---------|-----------|--------|----|-------------|
 | 2026-09-26 | deep, no PR-level selection | 0.177 | 0.614 | 0.275 | 11.8 |
-| 2026-09-26 | deep + PR-level selection (8ae2da6) | 0.423 | 0.449 | **0.436** | 3.5 |
+| 2026-09-26 | deep + PR-level selection (8ae2da6) | 0.423 | 0.449 | 0.436 | 3.5 |
+| 2026-09-27 | same code, rerun with retry fix (mean of 4) | 0.39 | 0.43 | 0.408 | 3.6 |
+| 2026-09-27 | + definitions of called functions (mean of 4) | 0.42 | 0.45 | **0.435** | 3.6 |
 
-Per repo (selection): grafana 0.54, cal.com 0.49, discourse 0.46, sentry
-0.38, keycloak 0.32. The 40 non-sentry PRs, never used for prompt tuning,
-score 0.450. Leaderboard reference on the same judge: cubic-v2 0.58,
+The 0.436 first run was at the lucky end of the noise: the same code scores
+0.408 on average once dropped model connections are retried. Rows marked
+"mean of 4" average one full run and three reruns of the selection stage on
+its saved findings, which removes most of the selector's run-to-run noise.
+
+Leaderboard reference on the same judge: cubic-v2 0.58,
 qodo-extended-v2 0.57, augment 0.54, gemini-v2 / copilot-v2 0.45.
 
 ## Configuration
