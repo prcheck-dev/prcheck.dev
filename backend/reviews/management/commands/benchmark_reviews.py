@@ -59,9 +59,13 @@ def _comment(text: str, suggestion: str = "") -> str:
     return f"{text}\n\nSuggested fix: {suggestion}" if suggestion else text
 
 
-def _row(text, suggestion, severity, category, path, line) -> dict:
-    return {"comment": _comment(text, suggestion), "severity": str(severity).capitalize(),
-            "category": category, "path": path, "line": line}
+def _row(text, suggestion, severity, category, path, line, source=None) -> dict:
+    row = {"comment": _comment(text, suggestion), "severity": str(severity).capitalize(),
+           "category": category, "path": path, "line": line}
+    # Kept so a reselection rerun still posts cross-file findings first.
+    if source:
+        row["source"] = source
+    return row
 
 
 class Command(BaseCommand):
@@ -129,7 +133,7 @@ class Command(BaseCommand):
                 text, _, suggestion = row["comment"].partition("\n\nSuggested fix: ")
                 findings.append({"text": text, "suggestion": suggestion, "path": row["path"],
                                  "line": row["line"], "severity": row["severity"].lower(),
-                                 "category": row["category"]})
+                                 "category": row["category"], "source": row.get("source")})
             chosen = select_findings(
                 Completer(), Budget(), pr_title=snapshot.title, diff_text=number_diff(review_diff),
                 findings=findings, top_k=int(getattr(settings, "PRCHECK_REVIEW_TOP_K", 8)),
@@ -163,7 +167,8 @@ class Command(BaseCommand):
                 if captured.findings is not None:
                     result["unselected"] = [
                         _row(f.get("text", ""), f.get("suggestion") or "", f.get("severity", ""),
-                             f.get("category", ""), f.get("path", ""), f.get("line", 0))
+                             f.get("category", ""), f.get("path", ""), f.get("line", 0),
+                             source=f.get("source"))
                         for f in captured.findings
                     ]
             except Exception as exc:  # one broken PR must not abort the whole run
