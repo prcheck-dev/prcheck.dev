@@ -283,6 +283,9 @@ PRCHECK_DEEP_VERIFY_CONTEXT_BYTES = env.int("PRCHECK_DEEP_VERIFY_CONTEXT_BYTES",
 # comments per PR, so more is mostly noise.
 PRCHECK_REVIEW_SELECT = env.bool("PRCHECK_REVIEW_SELECT", default=True)
 PRCHECK_REVIEW_TOP_K = env.int("PRCHECK_REVIEW_TOP_K", default=8)
+# Posts per PR = share of verified findings, at least MIN_POSTS, at most TOP_K.
+PRCHECK_REVIEW_MIN_POSTS = env.int("PRCHECK_REVIEW_MIN_POSTS", default=3)
+PRCHECK_REVIEW_POST_SHARE = env.float("PRCHECK_REVIEW_POST_SHARE", default=1 / 3)
 # Show a GitHub check run ("prcheck / review") that goes in-progress -> pass/fail.
 PRCHECK_ENABLE_CHECKS = env.bool("PRCHECK_ENABLE_CHECKS", default=True)
 # PR comment that triggers a review, e.g. "/prcheck" or "/prcheck review".

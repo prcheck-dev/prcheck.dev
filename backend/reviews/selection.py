@@ -83,13 +83,15 @@ def _confidence(finding: dict) -> float:
 
 
 def post_limit(candidates: int, top_k: int) -> int:
-    """How many findings a PR may post: about a third of what survived verify.
+    """How many findings a PR may post: a share of what survived verify.
 
     Large PRs legitimately carry more issues than small ones, but verified
     candidates are still mostly noise, so the cap grows slowly and stops at
     ``top_k``.
     """
-    return min(top_k, max(3, round(candidates / 3)))
+    minimum = int(_conf("PRCHECK_REVIEW_MIN_POSTS", 3))
+    share = float(_conf("PRCHECK_REVIEW_POST_SHARE", 1 / 3))
+    return min(top_k, max(minimum, round(candidates * share)))
 
 
 def fallback_top_k(findings: list[dict], top_k: int) -> list[dict]:
