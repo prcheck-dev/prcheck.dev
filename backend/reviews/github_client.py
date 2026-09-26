@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
+import http.client
 import json
 import logging
 import re
@@ -47,30 +48,39 @@ class GitHubAPI:
     def enabled(self) -> bool:
         return bool(self.repo and self.token)
 
-    def request(self, method: str, path: str, body: dict | None = None):
-        url = f"{self.base}{path}"
+    def request(self, method: str, path: str, body: dict | None = None, *, timeout: float = 30):
         data = json.dumps(body).encode() if body is not None else None
-        req = urllib.request.Request(url, data=data, method=method, headers={
+        text = self._send(method, path, data=data, accept="application/vnd.github+json", timeout=timeout)
+        return json.loads(text) if text.strip() else {}
+
+    def _send(self, method: str, path: str, *, data: bytes | None, accept: str, timeout: float) -> str:
+        req = urllib.request.Request(f"{self.base}{path}", data=data, method=method, headers={
             "Authorization": f"Bearer {self.token}",
-            "Accept": "application/vnd.github+json",
+            "Accept": accept,
             "X-GitHub-Api-Version": "2022-11-28",
             "Content-Type": "application/json",
             "User-Agent": "prcheck-reviews/1.0",
         })
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                text = resp.read().decode()
-                return json.loads(text) if text.strip() else {}
-        except urllib.error.HTTPError as exc:
-            raise GitHubAPIError(
-                f"{method} {path} -> {exc.code}: {exc.read().decode()[:500]}",
-                status_code=exc.code,
-            ) from exc
-        except urllib.error.URLError as exc:
-            raise GitHubAPIError(f"{method} {path}: {exc.reason}") from exc
+        # Large bodies (recursive trees, big diffs) are sometimes cut off mid-read;
+        # a GET is safe to repeat, a write is not.
+        attempts = 2 if method == "GET" else 1
+        for attempt in range(1, attempts + 1):
+            try:
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    return resp.read().decode()
+            except urllib.error.HTTPError as exc:
+                raise GitHubAPIError(
+                    f"{method} {path} -> {exc.code}: {exc.read().decode()[:500]}",
+                    status_code=exc.code,
+                ) from exc
+            except (urllib.error.URLError, http.client.HTTPException, OSError) as exc:
+                if attempt == attempts:
+                    raise GitHubAPIError(f"{method} {path}: {getattr(exc, 'reason', exc)!r}") from exc
+                LOGGER.info("github_request_retry method=%s path=%s error=%r", method, path, exc)
+        raise AssertionError("unreachable")
 
-    def get(self, path: str):
-        return self.request("GET", path)
+    def get(self, path: str, *, timeout: float = 30):
+        return self.request("GET", path, timeout=timeout)
 
     def post(self, path: str, body: dict):
         return self.request("POST", path, body)
@@ -82,23 +92,7 @@ class GitHubAPI:
         return self.request("DELETE", path)
 
     def get_text(self, path: str, *, accept: str, timeout: float = 60) -> str:
-        url = f"{self.base}{path}"
-        req = urllib.request.Request(url, method="GET", headers={
-            "Authorization": f"Bearer {self.token}",
-            "Accept": accept,
-            "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": "prcheck-reviews/1.0",
-        })
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return resp.read().decode()
-        except urllib.error.HTTPError as exc:
-            raise GitHubAPIError(
-                f"GET {path} -> {exc.code}: {exc.read().decode()[:500]}",
-                status_code=exc.code,
-            ) from exc
-        except urllib.error.URLError as exc:
-            raise GitHubAPIError(f"GET {path}: {exc.reason}") from exc
+        return self._send("GET", path, data=None, accept=accept, timeout=timeout)
 
     def list_pages(self, path: str, *, per_page: int = 100, max_pages: int = 50) -> list:
         items: list = []
@@ -139,7 +133,8 @@ class GitHubAPI:
     def repository_tree(self, ref: str) -> list[str]:
         """Return blob paths reachable from ``ref`` for bounded symbol lookup."""
         try:
-            result = self.get(f"/repos/{self.repo}/git/trees/{quote(ref, safe='')}?recursive=1")
+            # Monorepo trees run to several MB, so allow longer than a normal call.
+            result = self.get(f"/repos/{self.repo}/git/trees/{quote(ref, safe='')}?recursive=1", timeout=90)
         except GitHubAPIError:
             return []
         if not isinstance(result, dict):
@@ -651,6 +646,21 @@ def create_check_run(api: GitHubAPI, head_sha: str) -> int | None:
         return result.get("id") if isinstance(result, dict) else None
     except GitHubAPIError:
         return None  # missing Checks:write permission should not fail the review
+
+
+def fail_check_run(api: GitHubAPI, check_run_id: int | None, reason: str) -> None:
+    """Close a check run whose review crashed, so the PR is not left pending forever."""
+    if not api.enabled or not check_run_id:
+        return
+    try:
+        api.patch(f"/repos/{api.repo}/check-runs/{check_run_id}", {
+            "status": "completed",
+            "conclusion": "neutral",
+            "completed_at": _now_iso(),
+            "output": {"title": "prcheck could not finish this review", "summary": reason[:1000]},
+        })
+    except GitHubAPIError:
+        pass
 
 
 def complete_check_run(api: GitHubAPI, check_run_id: int | None, verdict: str,

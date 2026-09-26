@@ -54,6 +54,8 @@ Never report: style preferences, formatting, "consider adding tests/docs/logging
 
 Use the full file content for context, but only report issues INTRODUCED by this diff. One issue per finding.
 
+State each finding as a definite failure ("X raises TypeError when Y"). If the failure depends on a definition you cannot see (e.g. whether some function accepts a new argument), do not report it — "may not accept"/"risk" guesses are wrong more often than right.
+
 """ + INPUT_RULES + "\n\n" + SEVERITY_RUBRIC + """
 
 `suggestion` states the specific code change that fixes the issue (one sentence or a short snippet).
@@ -70,6 +72,7 @@ REJECT a candidate if ANY of these hold:
 - WRONG: it misreads the changed logic, or its failing path does not actually hold given the code shown (e.g. the value is already guarded, validated, or cannot be null there).
 - PRE-EXISTING: the defect lives in unchanged code and the diff does not make it newly reachable.
 - SPECULATIVE: it depends on hypothetical callers, inputs, configuration, or runtime behavior not shown.
+- HEDGED: it only says the code "may"/"might" fail or that an API "may not accept" something. Check the supplied context: keep it only if the context proves the failure actually happens.
 - NON-ACTIONABLE: it does not imply a concrete code change — vague advice, restating the code, or "consider ..." with no demonstrated defect.
 - DUPLICATE: it describes the same underlying fix as another (usually higher-ranked) candidate. Keep only one.
 - NOISE: style, naming taste, or trivial issues with no real impact.

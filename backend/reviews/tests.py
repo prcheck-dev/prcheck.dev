@@ -725,6 +725,111 @@ class DeepVerifyTests(TestCase):
         self.assertEqual(result["findings"], [])
 
 
+@override_settings(**REVIEW_SETTINGS)
+class SelectionTests(TestCase):
+    FINDINGS = [
+        {"text": "crash on None", "path": "a.py", "line": 1, "severity": "high", "category": "bug"},
+        {"text": "same crash restated", "path": "b.py", "line": 2, "severity": "high", "category": "bug"},
+        {"text": "may not accept kwarg", "path": "a.py", "line": 3, "severity": "critical", "category": "api"},
+        {"text": "docstring wrong", "path": "a.py", "line": 4, "severity": "low", "category": "doc_defect"},
+    ]
+
+    def _select(self, reply, top_k=2):
+        from .selection import select_findings
+
+        def _complete(self, system_prompt, prompt, *, max_tokens=None):
+            self.last_usage = {"provider": "fake", "total_tokens": 10}
+            return reply, self.last_usage
+
+        with mock.patch.object(Completer, "complete", _complete):
+            return select_findings(Completer(), Budget(), pr_title="t", diff_text="d",
+                                   findings=self.FINDINGS, top_k=top_k)
+
+    def test_indices_refer_to_diff_order_and_bad_indices_are_ignored(self):
+        # Candidates are shown sorted by path/line: a.py:1, a.py:3, a.py:4, b.py:2.
+        reply = json.dumps({"selected": [{"index": 3}, {"index": 9}, {"index": 3}, {"index": 0}]})
+        self.assertEqual([f["line"] for f in self._select(reply)], [2, 1])
+
+    def test_post_limit_scales_with_candidates(self):
+        from .selection import post_limit
+        self.assertEqual([post_limit(n, 8) for n in (2, 9, 15, 45)], [3, 3, 5, 8])
+
+    def test_caps_at_top_k(self):
+        reply = json.dumps({"selected": [{"index": 0}, {"index": 1}, {"index": 3}]})
+        self.assertEqual(len(self._select(reply, top_k=2)), 2)
+
+    def test_degraded_call_falls_back_to_severity_ranking(self):
+        self.assertEqual([f["line"] for f in self._select("not json")], [3, 1])
+
+    def test_pipeline_posts_only_selected_findings(self):
+        findings = [
+            {"text": "SQL built via string interpolation", "path": "app/db.py",
+             "line": 2, "severity": "high", "category": "security"},
+            {"text": "unrelated worry about logging volume", "path": "app/db.py",
+             "line": 2, "severity": "medium", "category": "perf"},
+        ]
+        base = _fake_complete(findings)
+
+        def _complete(self, system_prompt, prompt, *, max_tokens=None):
+            if "triaging" in system_prompt:
+                self.last_usage = {"provider": "fake", "total_tokens": 10}
+                return json.dumps({"selected": [{"index": 0}]}), self.last_usage
+            return base(self, system_prompt, prompt, max_tokens=max_tokens)
+
+        diff = "@@ -1,1 +1,2 @@\n ctx\n+bad line\n"
+        review = Review.objects.create(repo="o/r", pr_number=7)
+        with mock.patch.object(gh, "fetch_pull_snapshot", return_value=_snapshot(diff)), \
+             mock.patch.object(Completer, "complete", _complete):
+            services.run_review(review.pk)
+        self.assertEqual(list(review.findings.values_list("text", flat=True)),
+                         ["SQL built via string interpolation"])
+
+
+class GitHubResilienceTests(TestCase):
+    def test_truncated_get_is_retried_once(self):
+        import http.client
+
+        class _Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                return b'{"ok": true}'
+
+        calls = []
+
+        def _urlopen(req, timeout=None):
+            calls.append(req.full_url)
+            if len(calls) == 1:
+                raise http.client.IncompleteRead(b"partial", 100)
+            return _Resp()
+
+        with mock.patch("urllib.request.urlopen", _urlopen):
+            self.assertEqual(gh.GitHubAPI(repo="o/r", token="t").get("/x"), {"ok": True})
+        self.assertEqual(len(calls), 2)
+
+    def test_writes_are_not_retried(self):
+        with mock.patch("urllib.request.urlopen", side_effect=ConnectionResetError()) as urlopen, \
+             self.assertRaises(gh.GitHubAPIError):
+            gh.GitHubAPI(repo="o/r", token="t").post("/x", {})
+        self.assertEqual(urlopen.call_count, 1)
+
+    @override_settings(**dict(REVIEW_SETTINGS, PRCHECK_ENABLE_CHECKS=True))
+    def test_crashed_review_closes_its_check_run(self):
+        review = Review.objects.create(repo="o/r", pr_number=7)
+        with mock.patch.object(gh, "fetch_pull_snapshot", return_value=_snapshot()), \
+             mock.patch.object(gh, "create_check_run", return_value=42), \
+             mock.patch.object(gh, "fail_check_run") as fail, \
+             mock.patch.object(services, "_run_pipeline", side_effect=RuntimeError("boom")), \
+             self.assertRaises(RuntimeError):
+            services.run_review(review.pk)
+        fail.assert_called_once()
+        self.assertEqual(fail.call_args.args[1], 42)
+
+
 class AdversaryCitationTests(TestCase):
     @override_settings(**REVIEW_SETTINGS)
     def test_citation_must_land_on_a_changed_line(self):

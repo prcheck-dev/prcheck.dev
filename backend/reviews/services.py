@@ -3,7 +3,8 @@
 Mirrors shipwright's pipeline shape (map -> review -> adversarial -> verdict ->
 publish) trimmed to a code-review agent. Reviewer shards run concurrently on a
 thread pool sharing one budget; the adversarial pass can only tighten the
-verdict on substantiated evidence. Every finding is grounded against the diff
+verdict on substantiated evidence, and a final PR-level selection keeps only
+the few findings worth posting. Every finding is grounded against the diff
 in code before it is stored, so the model cannot publish off-diff noise.
 """
 from __future__ import annotations
@@ -25,6 +26,7 @@ from .findings import dedupe_findings, ground_findings, sort_findings
 from .llm import Completer
 from .models import Finding, Review
 from .reviewer import build_review_shards, merge_review_results, run_reviewer
+from .selection import select_findings
 from .verdict import APPROVE, APPROVE_COND, compute_verdict
 
 LOGGER = logging.getLogger("reviews.services")
@@ -77,6 +79,14 @@ def run_review(review_id: int) -> Review:
 
     # Show an in-progress check on the PR while the review runs.
     check_run_id = gh.create_check_run(api, snapshot.head_sha) if _conf("PRCHECK_ENABLE_CHECKS", True) else None
+    try:
+        return _run_pipeline(review, api, snapshot, budget, completer, check_run_id)
+    except Exception:
+        gh.fail_check_run(api, check_run_id, "Internal error during review.")
+        raise
+
+
+def _run_pipeline(review, api, snapshot, budget, completer, check_run_id) -> Review:
     ci_evidence = (
         gh.fetch_ci_evidence(api, snapshot.head_sha)
         if _conf("PRCHECK_CI_GATE_APPROVAL", True) else None
@@ -119,9 +129,16 @@ def run_review(review_id: int) -> Review:
             adv = None
         findings = _merge_adversary(findings, adversary_mod.verified_blockers(adv))
 
+    findings = dedupe_findings(findings)
+    if _conf("PRCHECK_REVIEW_SELECT", True):
+        findings = select_findings(
+            completer, budget, pr_title=snapshot.title, diff_text=number_diff(review_diff),
+            findings=sort_findings(findings), top_k=int(_conf("PRCHECK_REVIEW_TOP_K", 5)),
+        )
+
     return _finalize(
         review, api, snapshot,
-        findings=sort_findings(dedupe_findings(findings)), degraded=degraded,
+        findings=sort_findings(findings), degraded=degraded,
         usage=budget.as_dict(), ci_evidence=ci_evidence, check_run_id=check_run_id,
     )
 

@@ -27,6 +27,10 @@ def sort_findings(findings: list[dict]) -> list[dict]:
     ))
 
 
+def sort_by_location(findings: list[dict]) -> list[dict]:
+    return sorted(findings, key=lambda f: (str(f.get("path") or ""), _int_or_zero(f.get("line"))))
+
+
 def _int_or_zero(value) -> int:
     return value if type(value) is int else 0
 

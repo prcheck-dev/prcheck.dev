@@ -16,7 +16,8 @@ verifier with citation gating, and the verdict ordering.
 fetch PR snapshot  ->  skip lockfiles/generated/vendored files  ->  number the diff
    ->  fast reviewer shards OR deep per-file issue lists (+ per-file verify)
    ->  ground findings against the diff  ->  adversarial gate
-   ->  merge + dedupe  ->  compute verdict  ->  persist  ->  (optional) publish
+   ->  merge + dedupe  ->  PR-level selection (top-K)  ->  compute verdict
+   ->  persist  ->  (optional) publish
 ```
 
 Noise control is enforced in code, not left to the prompt:
@@ -32,6 +33,12 @@ Noise control is enforced in code, not left to the prompt:
   `PRCHECK_REVIEW_IGNORE_GLOBS`.
 - **Severity rubric** — one shared rubric in every stage; the deep verifier may
   lower an overstated severity, since the verdict is computed from it.
+- **PR-level selection** ([`selection.py`](selection.py)) — one final call sees
+  every surviving finding together, drops cross-file duplicates and hedged
+  "may not accept"-style guesses, and keeps at most `PRCHECK_REVIEW_TOP_K`
+  (default 5) in priority order. Human reviewers leave ~3-4 comments per PR;
+  posting every defensible finding was the main source of benchmark false
+  positives. A degraded call falls back to severity ranking.
 - **Publishing** — one batched GitHub review per run (one notification), no
   re-posting of comments an earlier push already left, low-severity notes kept
   in the collapsed part of the summary, and a run superseded by a newer push
@@ -89,6 +96,20 @@ Reviews run in a background thread; poll `GET /api/reviews/{id}/` for
 python manage.py run_review owner/name 123
 ```
 
+## Benchmark
+
+Score against the golden-comment benchmark without touching GitHub (publishing,
+check runs and the CI gate are forced off; the token only needs read access):
+
+```bash
+PRCHECK_GITHUB_TOKEN=$(gh auth token) python manage.py benchmark_reviews \
+    ../experiments/golden_comments/*.json --out run.json --concurrency 3
+```
+
+The output uses the golden-comment schema. Each PR also carries `unselected`
+(findings before PR-level selection), so one run measures selection's effect.
+Reruns resume: completed PRs are skipped, failed or degraded ones retried.
+
 ## Configuration
 
 See [`.env.example`](.env.example). Key settings: `PRCHECK_LLM_BACKEND`
@@ -114,9 +135,9 @@ marked `degraded`, with no findings — nothing crashes.
 python manage.py test reviews
 ```
 
-62 tests, fully offline (model and GitHub calls are faked): schema validation,
+Fully offline tests (model and GitHub calls are faked): schema validation,
 sharding, dedup/merge ordering, verdict ordering, diff numbering, finding
 grounding, low-signal file filtering, adversary citation gating, per-file
-verification and severity recalibration, batched/deduplicated publishing, the LLM retry/degrade path, related-definition retrieval,
+verification and severity recalibration, PR-level selection, GitHub read retries, batched/deduplicated publishing, the LLM retry/degrade path, related-definition retrieval,
 repository guidance, CI gating, deep-review context propagation,
 end-to-end orchestration, and the API + webhook.
