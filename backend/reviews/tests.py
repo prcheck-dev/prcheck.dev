@@ -865,6 +865,15 @@ class RepoContextTests(TestCase):
         self.assertEqual(list(found), ["lib/oauth.ts (definition of refreshTokens)"])
         self.assertIn("3  export const refreshTokens = async (userId, slug)", found["lib/oauth.ts (definition of refreshTokens)"])
 
+    def test_call_sites_of_changed_functions_come_from_other_files(self):
+        from .repo_context import call_sites, changed_functions
+        diff = "@@ -10,3 +10,4 @@ def charge(order):\n+    total = order.total\n+def refund(order, amount):\n"
+        self.assertEqual(changed_functions(diff), ["refund", "charge"])
+        space = {"api/views.py": "a = 1\nrefund(order)\nb = 2\n", "lib/pay.py": "def refund(order, amount):\n"}
+        found = call_sites(["refund"], space)
+        self.assertEqual(list(found), ["api/views.py:2 (call of refund)"])
+        self.assertIn("2  refund(order)", found["api/views.py:2 (call of refund)"])
+
     def test_generic_names_defined_in_many_files_are_skipped(self):
         from .repo_context import targeted_definitions
         space = {f"m{i}.py": "def save(self):\n    pass\n" for i in range(3)}

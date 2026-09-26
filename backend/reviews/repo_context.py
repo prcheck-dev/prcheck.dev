@@ -2,12 +2,13 @@
 
 Many defects the reviewer misses need a second place in the codebase: the
 definition of a function the new code calls (its parameters, return shape,
-abstract methods).
+abstract methods), or the places that call a function the PR changes.
 
 ``targeted_definitions`` finds the definitions of names the changed lines
 call inside files already fetched over the API (import-resolved related files
 and the PR's other changed files) and returns the definition itself rather
-than the head of the file. No model is involved.
+than the head of the file. ``call_sites`` finds where those same files call
+the functions a changed file defines or modifies. No model is involved.
 """
 from __future__ import annotations
 
@@ -94,4 +95,44 @@ def targeted_definitions(calls: list[str], search_space: dict[str, str], *,
             break
         found[f"{path} (definition of {name})"] = snippet
         used += len(snippet)
+    return found
+
+
+_HUNK_CONTEXT_RE = re.compile(r"^@@[^@]*@@(.*)$", re.M)
+
+
+def changed_functions(block_diff: str) -> list[str]:
+    """Functions a file's diff defines or edits: new definitions plus hunk-header context."""
+    text = "\n".join(_added_lines(block_diff)) + "\n" + "\n".join(_HUNK_CONTEXT_RE.findall(block_diff))
+    names = [g for m in _DEFINED_RE.finditer(text) for g in m.groups() if g]
+    return [n for n in dict.fromkeys(names) if len(n) >= 3 and n.lower() not in _KEYWORDS]
+
+
+def call_sites(names: list[str], search_space: dict[str, str], *, max_bytes: int = 12_000,
+               per_name: int = 4, max_hits: int = 12, radius: int = 3) -> dict[str, str]:
+    """Return ``{"<path>:<line> (call of <name>)": snippet}`` for calls outside the defining file.
+
+    Names called from more than ``max_hits`` places are too common to show usefully.
+    """
+    found: dict[str, str] = {}
+    used = 0
+    for name in names:
+        call = re.compile(rf"(?<![\w$]){re.escape(name)}[ \t]*\(")
+        definition = re.compile(_definition_pattern(name))
+        hits = []
+        for path, text in search_space.items():
+            for number, line in enumerate(text.splitlines(), 1):
+                if call.search(line) and not definition.search(line):
+                    hits.append((path, number, text))
+        if not hits or len(hits) > max_hits:
+            continue
+        hits.sort(key=lambda h: (_is_test(h[0]), h[0], h[1]))
+        for path, number, text in hits[:per_name]:
+            lines = text.splitlines()
+            lo, hi = max(1, number - radius), min(len(lines), number + radius)
+            snippet = "\n".join(f"{n:>6}  {lines[n - 1]}" for n in range(lo, hi + 1))
+            if used + len(snippet) > max_bytes:
+                return found
+            found[f"{path}:{number} (call of {name})"] = snippet
+            used += len(snippet)
     return found
