@@ -292,6 +292,8 @@ PRCHECK_COMMAND_PREFIX = env("PRCHECK_COMMAND_PREFIX", default="/prcheck")
 PRCHECK_GITHUB_TOKEN = env("PRCHECK_GITHUB_TOKEN", default="")
 PRCHECK_GITHUB_API_URL = env("PRCHECK_GITHUB_API_URL", default="https://api.github.com")
 PRCHECK_GITHUB_WEBHOOK_SECRET = env("PRCHECK_GITHUB_WEBHOOK_SECRET", default="")
+# Longest a review waits for a GitHub rate limit to reset before failing.
+PRCHECK_GITHUB_RATE_LIMIT_MAX_WAIT_S = env.float("PRCHECK_GITHUB_RATE_LIMIT_MAX_WAIT_S", default=300)
 
 # GitHub App: the reviewer posts as the app when these are set (preferred over a
 # PAT). The private key is a multi-line PEM, so it can arrive base64-encoded

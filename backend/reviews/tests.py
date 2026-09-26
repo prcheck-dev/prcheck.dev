@@ -817,6 +817,38 @@ class GitHubResilienceTests(TestCase):
             gh.GitHubAPI(repo="o/r", token="t").post("/x", {})
         self.assertEqual(urlopen.call_count, 1)
 
+    @override_settings(PRCHECK_GITHUB_RATE_LIMIT_MAX_WAIT_S=60)
+    def test_rate_limited_get_waits_for_reset_then_retries(self):
+        import email.message
+        import urllib.error
+
+        class _Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                return b'{"ok": true}'
+
+        headers = email.message.Message()
+        headers["X-RateLimit-Remaining"] = "0"
+        headers["X-RateLimit-Reset"] = "1030"
+        calls = []
+
+        def _urlopen(req, timeout=None):
+            calls.append(1)
+            if len(calls) == 1:
+                raise urllib.error.HTTPError(req.full_url, 403, "rate limited", headers, None)
+            return _Resp()
+
+        with mock.patch("urllib.request.urlopen", _urlopen), \
+             mock.patch.object(gh.time, "time", return_value=1000), \
+             mock.patch.object(gh.time, "sleep") as sleep:
+            self.assertEqual(gh.GitHubAPI(repo="o/r", token="t").get("/x"), {"ok": True})
+        sleep.assert_called_once_with(35.0)
+
     @override_settings(**dict(REVIEW_SETTINGS, PRCHECK_ENABLE_CHECKS=True))
     def test_crashed_review_closes_its_check_run(self):
         review = Review.objects.create(repo="o/r", pr_number=7)

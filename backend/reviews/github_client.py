@@ -13,6 +13,7 @@ import http.client
 import json
 import logging
 import re
+import time
 import urllib.error
 import urllib.request
 from collections import Counter
@@ -39,6 +40,27 @@ class GitHubAPIError(RuntimeError):
         self.status_code = status_code
 
 
+def _rate_limit_wait(exc: urllib.error.HTTPError) -> float | None:
+    """Seconds to wait out a GitHub rate limit, or None when not rate limited or too long.
+
+    Waiting beats failing: a limited request otherwise fails the whole review.
+    The cap (``PRCHECK_GITHUB_RATE_LIMIT_MAX_WAIT_S``) keeps a review from
+    stalling for most of an hour in production.
+    """
+    if exc.code not in (403, 429):
+        return None
+    headers = exc.headers or {}
+    if headers.get("Retry-After", "").isdigit():
+        wait = float(headers["Retry-After"])
+    elif headers.get("X-RateLimit-Remaining") == "0" and headers.get("X-RateLimit-Reset", "").isdigit():
+        wait = float(headers["X-RateLimit-Reset"]) - time.time() + 5
+    else:
+        return None
+    from django.conf import settings
+    max_wait = float(getattr(settings, "PRCHECK_GITHUB_RATE_LIMIT_MAX_WAIT_S", 300))
+    return max(1.0, wait) if wait <= max_wait else None
+
+
 class GitHubAPI:
     def __init__(self, repo: str, token: str, base: str = "https://api.github.com"):
         self.repo = repo
@@ -54,7 +76,8 @@ class GitHubAPI:
         text = self._send(method, path, data=data, accept="application/vnd.github+json", timeout=timeout)
         return json.loads(text) if text.strip() else {}
 
-    def _send(self, method: str, path: str, *, data: bytes | None, accept: str, timeout: float) -> str:
+    def _send(self, method: str, path: str, *, data: bytes | None, accept: str, timeout: float,
+              waited: bool = False) -> str:
         req = urllib.request.Request(f"{self.base}{path}", data=data, method=method, headers={
             "Authorization": f"Bearer {self.token}",
             "Accept": accept,
@@ -70,6 +93,11 @@ class GitHubAPI:
                 with urllib.request.urlopen(req, timeout=timeout) as resp:
                     return resp.read().decode()
             except urllib.error.HTTPError as exc:
+                wait = None if waited else _rate_limit_wait(exc)
+                if wait is not None:
+                    LOGGER.warning("github_rate_limited method=%s path=%s wait_s=%.0f", method, path, wait)
+                    time.sleep(wait)
+                    return self._send(method, path, data=data, accept=accept, timeout=timeout, waited=True)
                 raise GitHubAPIError(
                     f"{method} {path} -> {exc.code}: {exc.read().decode()[:500]}",
                     status_code=exc.code,
