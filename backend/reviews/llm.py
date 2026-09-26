@@ -15,6 +15,7 @@ Backends (``PRCHECK_LLM_BACKEND``):
 """
 from __future__ import annotations
 
+import http.client
 import json
 import logging
 import re
@@ -215,7 +216,10 @@ class Completer:
                 last_error = RuntimeError(f"{provider} HTTP {exc.code}: {detail}")
                 if not _retryable(exc.code, detail) or attempt == max_attempts - 1:
                     raise last_error from exc
-            except (URLError, TimeoutError) as exc:
+            except (URLError, TimeoutError, http.client.HTTPException, ConnectionError) as exc:
+                # A dropped connection (reset, remote closed, truncated body) is as
+                # transient as a timeout; without a retry the file's findings or
+                # verification were silently lost.
                 last_error = RuntimeError(f"{provider} request failed: {getattr(exc, 'reason', exc)}")
                 if attempt == max_attempts - 1:
                     raise last_error from exc

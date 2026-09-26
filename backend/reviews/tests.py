@@ -830,6 +830,32 @@ class GitHubResilienceTests(TestCase):
         self.assertEqual(fail.call_args.args[1], 42)
 
 
+class LLMRetryTests(TestCase):
+    @override_settings(PRCHECK_LLM_MAX_RETRIES=3)
+    def test_dropped_connections_are_retried(self):
+        import http.client
+
+        class _Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                return b"ok"
+
+        errors = [http.client.RemoteDisconnected("closed"), ConnectionResetError(54, "reset")]
+
+        def _urlopen(req, timeout=None):
+            if errors:
+                raise errors.pop(0)
+            return _Resp()
+
+        with mock.patch("reviews.llm.urlopen", _urlopen), mock.patch("reviews.llm.time.sleep"):
+            self.assertEqual(Completer()._post("https://llm.test/v1", {}, headers={}, provider="openai"), "ok")
+
+
 class AdversaryCitationTests(TestCase):
     @override_settings(**REVIEW_SETTINGS)
     def test_citation_must_land_on_a_changed_line(self):
