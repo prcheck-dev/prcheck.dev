@@ -123,7 +123,11 @@ comparisons are approximate. One run per row; treat ±0.02 as noise.
 | 2026-09-26 | deep, no PR-level selection | 0.177 | 0.614 | 0.275 | 11.8 |
 | 2026-09-26 | deep + PR-level selection (8ae2da6) | 0.423 | 0.449 | 0.436 | 3.5 |
 | 2026-09-27 | same code, rerun with retry fix (mean of 4) | 0.39 | 0.43 | 0.408 | 3.6 |
-| 2026-09-27 | + definitions of called functions (mean of 4) | 0.42 | 0.45 | **0.435** | 3.6 |
+| 2026-09-27 | + definitions of called functions (mean of 4) | 0.42 | 0.45 | 0.435 | 3.6 |
+| 2026-09-27 | + call sites of changed functions, 30 related files (mean of 4) | 0.43 | 0.46 | **0.443** | 3.6 |
+
+Before selection, the reviewer's findings cover 0.633 of golden issues at
+baseline, 0.646 with definitions and 0.677 with call sites added.
 
 The 0.436 first run was at the lucky end of the noise: the same code scores
 0.408 on average once dropped model connections are retried. Rows marked
