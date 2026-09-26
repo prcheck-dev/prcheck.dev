@@ -136,6 +136,18 @@ class Command(BaseCommand):
                 store.extend(f for f in (result or {}).get("findings", []) if isinstance(f, dict))
             return result
 
+        real_related = gh.fetch_related_definitions
+
+        def _capturing_related(*args, **kwargs):
+            related = real_related(*args, **kwargs)
+            # Only the targeted snippets are kept: whole related files would make
+            # the output tens of MB and are not what a selector would be shown.
+            captured.related = {
+                source: {k: v for k, v in items.items() if "(definition of" in k or "(call of" in k}
+                for source, items in related.items()
+            }
+            return related
+
         def _capturing_verify(*args, **kwargs):
             kept = real_verify(*args, **kwargs)
             store = getattr(captured, "verified", None)
@@ -181,7 +193,7 @@ class Command(BaseCommand):
             repo, number = _parse_url(entry["url"])
             result = {"pr_title": entry.get("pr_title", ""), "url": entry["url"], "comments": []}
             captured.findings = None
-            captured.generated, captured.verified = [], []
+            captured.generated, captured.verified, captured.related = [], [], {}
             try:
                 review = run_review(
                     Review.objects.create(repo=repo, pr_number=number, trigger="benchmark").pk
@@ -201,6 +213,7 @@ class Command(BaseCommand):
                              source=f.get("source"))
                         for f in captured.findings
                     ]
+                result["related"] = {k: v for k, v in captured.related.items() if v}
                 kept = {(f.get("text"), f.get("path"), f.get("line")) for f in captured.verified}
                 result["generated"] = [
                     {**_row(f.get("text", ""), f.get("suggestion") or "", f.get("severity", ""),
@@ -226,7 +239,8 @@ class Command(BaseCommand):
              mock.patch.object(services, "select_findings", _capturing_select), \
              mock.patch.object(deep_review, "_map", _map_with_capture), \
              mock.patch.object(deep_review, "structured_call", _capturing_call), \
-             mock.patch.object(deep_review, "_verify", _capturing_verify):
+             mock.patch.object(deep_review, "_verify", _capturing_verify), \
+             mock.patch.object(gh, "fetch_related_definitions", _capturing_related):
             with ThreadPoolExecutor(max_workers=max(1, options["concurrency"])) as pool:
                 for future in [pool.submit(_review, e) for e in entries]:
                     future.result()
