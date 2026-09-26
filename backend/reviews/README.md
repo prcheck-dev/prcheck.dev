@@ -110,6 +110,24 @@ The output uses the golden-comment schema. Each PR also carries `unselected`
 (findings before PR-level selection), so one run measures selection's effect.
 Reruns resume: completed PRs are skipped, failed or degraded ones retried.
 
+### Results
+
+50 golden PRs (sentry, keycloak, grafana, discourse, cal.com), deep mode,
+gpt-5.2 reviewer, gpt-5.2 judge, "core" category profile. Scored with
+`experiments/prcheck_comments/judge_prcheck.py`, which follows the official
+benchmark's match prompt but not its extract/dedup steps, so leaderboard
+comparisons are approximate. One run per row; treat ±0.02 as noise.
+
+| Date | Version | Precision | Recall | F1 | Findings/PR |
+|------|---------|-----------|--------|----|-------------|
+| 2026-09-26 | deep, no PR-level selection | 0.177 | 0.614 | 0.275 | 11.8 |
+| 2026-09-26 | deep + PR-level selection (8ae2da6) | 0.423 | 0.449 | **0.436** | 3.5 |
+
+Per repo (selection): grafana 0.54, cal.com 0.49, discourse 0.46, sentry
+0.38, keycloak 0.32. The 40 non-sentry PRs, never used for prompt tuning,
+score 0.450. Leaderboard reference on the same judge: cubic-v2 0.58,
+qodo-extended-v2 0.57, augment 0.54, gemini-v2 / copilot-v2 0.45.
+
 ## Configuration
 
 See [`.env.example`](.env.example). Key settings: `PRCHECK_LLM_BACKEND`
