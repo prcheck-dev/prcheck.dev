@@ -11,7 +11,9 @@ Existing entries in ``--out`` are kept, so a crashed run resumes where it
 stopped; failed or degraded PRs are retried on the next invocation.
 
 Each entry also records ``unselected``: the findings that reached PR-level
-selection, so one run scores the pipeline both with and without it.
+selection, so one run scores the pipeline both with and without it, and
+``generated``: every deep-mode finding before verification, with its
+confidence and whether verification kept it.
 ``--reselect-from`` reruns only the selection stage over a previous run's
 ``unselected`` findings, so selector changes are measured on identical
 generations without paying for generation again.
@@ -29,6 +31,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import connection
 from django.test.utils import override_settings
 
+from reviews import deep_review
 from reviews import github_client as gh
 from reviews import services
 from reviews.budget import Budget
@@ -114,6 +117,32 @@ class Command(BaseCommand):
             captured.findings = list(kwargs.get("findings") or [])
             return real_select(*args, **kwargs)
 
+        # Deep review fans out to its own worker threads; carry this review's
+        # capture lists into them so generate/verify results land per PR.
+        real_map, real_call, real_verify = deep_review._map, deep_review.structured_call, deep_review._verify
+
+        def _map_with_capture(fn, items, max_workers):
+            generated, verified = getattr(captured, "generated", None), getattr(captured, "verified", None)
+
+            def _run(item):
+                captured.generated, captured.verified = generated, verified
+                return fn(item)
+            return real_map(_run, items, max_workers)
+
+        def _capturing_call(*args, **kwargs):
+            result = real_call(*args, **kwargs)
+            store = getattr(captured, "generated", None)
+            if store is not None and kwargs.get("session") in {"deep-generate", "deep-cross-file"}:
+                store.extend(f for f in (result or {}).get("findings", []) if isinstance(f, dict))
+            return result
+
+        def _capturing_verify(*args, **kwargs):
+            kept = real_verify(*args, **kwargs)
+            store = getattr(captured, "verified", None)
+            if store is not None:
+                store.extend(kept)
+            return kept
+
         previous = (
             {e["url"]: e for e in json.loads(Path(options["reselect_from"]).read_text())}
             if options["reselect_from"] else None
@@ -152,6 +181,7 @@ class Command(BaseCommand):
             repo, number = _parse_url(entry["url"])
             result = {"pr_title": entry.get("pr_title", ""), "url": entry["url"], "comments": []}
             captured.findings = None
+            captured.generated, captured.verified = [], []
             try:
                 review = run_review(
                     Review.objects.create(repo=repo, pr_number=number, trigger="benchmark").pk
@@ -171,6 +201,15 @@ class Command(BaseCommand):
                              source=f.get("source"))
                         for f in captured.findings
                     ]
+                kept = {(f.get("text"), f.get("path"), f.get("line")) for f in captured.verified}
+                result["generated"] = [
+                    {**_row(f.get("text", ""), f.get("suggestion") or "", f.get("severity", ""),
+                            f.get("category", ""), f.get("path", ""), f.get("line", 0),
+                            source=f.get("source")),
+                     "confidence": f.get("confidence"),
+                     "verified": (f.get("text"), f.get("path"), f.get("line")) in kept}
+                    for f in captured.generated
+                ]
             except Exception as exc:  # one broken PR must not abort the whole run
                 result.update(status="failed", error=repr(exc), degraded=True)
             finally:
@@ -184,7 +223,10 @@ class Command(BaseCommand):
             )
 
         with override_settings(**overrides), \
-             mock.patch.object(services, "select_findings", _capturing_select):
+             mock.patch.object(services, "select_findings", _capturing_select), \
+             mock.patch.object(deep_review, "_map", _map_with_capture), \
+             mock.patch.object(deep_review, "structured_call", _capturing_call), \
+             mock.patch.object(deep_review, "_verify", _capturing_verify):
             with ThreadPoolExecutor(max_workers=max(1, options["concurrency"])) as pool:
                 for future in [pool.submit(_review, e) for e in entries]:
                     future.result()
