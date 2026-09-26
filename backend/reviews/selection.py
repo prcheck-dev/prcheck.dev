@@ -131,6 +131,7 @@ def select_findings(
                 candidates=listing,
             ),
             schema=SELECT_SCHEMA, stage="select",
+            reasoning_effort=str(_conf("PRCHECK_SELECT_REASONING_EFFORT", "") or "") or None,
         )
     except BudgetExhausted:
         result = None

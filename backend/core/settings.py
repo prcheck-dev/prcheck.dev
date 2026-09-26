@@ -286,6 +286,9 @@ PRCHECK_REVIEW_TOP_K = env.int("PRCHECK_REVIEW_TOP_K", default=8)
 # Posts per PR = share of verified findings, at least MIN_POSTS, at most TOP_K.
 PRCHECK_REVIEW_MIN_POSTS = env.int("PRCHECK_REVIEW_MIN_POSTS", default=3)
 PRCHECK_REVIEW_POST_SHARE = env.float("PRCHECK_REVIEW_POST_SHARE", default=1 / 3)
+# Reasoning effort for the selection call only ("", "low", "medium", "high").
+# Generation stays non-reasoning: with reasoning it reports far fewer issues.
+PRCHECK_SELECT_REASONING_EFFORT = env("PRCHECK_SELECT_REASONING_EFFORT", default="")
 # Show a GitHub check run ("prcheck / review") that goes in-progress -> pass/fail.
 PRCHECK_ENABLE_CHECKS = env.bool("PRCHECK_ENABLE_CHECKS", default=True)
 # PR comment that triggers a review, e.g. "/prcheck" or "/prcheck review".
