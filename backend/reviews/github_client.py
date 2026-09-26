@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from urllib.parse import quote
 
 from .diffs import line_map
-from .repo_context import symbols_for_file, targeted_definitions
+from .repo_context import call_sites, changed_functions, symbols_for_file, targeted_definitions
 from .findings import SEVERITY_RANK, sort_findings
 
 LOGGER = logging.getLogger("reviews.github")
@@ -486,6 +486,7 @@ def fetch_related_definitions(
         calls = symbols_for_file(diff_by_path[source], file_contents.get(source, ""))
         others = {p: t for p, t in search_space.items() if p != source}
         targeted = targeted_definitions(calls, others, max_bytes=max_bytes)
+        targeted.update(call_sites(changed_functions(diff_by_path[source]), others))
         if targeted:
             result[source] = dict(targeted)
     for source, paths in selected_by_source.items():
