@@ -127,7 +127,8 @@ comparisons are approximate. One run per row; treat ±0.02 as noise.
 | 2026-09-27 | + call sites of changed functions, 30 related files (mean of 4) | 0.43 | 0.46 | 0.443 | 3.6 |
 | 2026-09-27 | + selector with medium reasoning, fills its quota (mean of 3) | 0.43 | 0.49 | 0.461 | 3.7 |
 | 2026-09-27 | same, fresh end-to-end run (1 run) | 0.45 | 0.50 | 0.473 | 3.6 |
-| 2026-09-27 | + picks adjusted by generator confidence (same run) | 0.45 | 0.51 | **0.476** | 3.6 |
+| 2026-09-27 | + picks adjusted by generator confidence (mean of 3 selection draws) | 0.45 | 0.49 | 0.468 | 3.6 |
+| 2026-09-27 | + majority vote of 3 selector runs (same findings) | 0.46 | 0.50 | **0.480** | 3.5 |
 
 The last row reran only the selection stage on the previous row's saved
 findings (three draws); reasoning for selection alone, without the fill
@@ -136,7 +137,9 @@ wording, gave 0.458 at precision 0.52 and 2.5 findings per PR.
 The confidence adjustment drops picks the generator rated below 0.7 and adds
 findings it rated 0.9 or more. It was found on one run's findings (+0.026
 over six selection draws) and held but shrank on a fresh run (+0.003), so
-treat it as a small gain.
+treat it as a small gain. The last two rows use the same fresh run's findings
+with three independent selector draws; majority voting over them also beat
+single draws on the earlier capture (0.491 vs 0.485).
 
 Before selection, the reviewer's findings cover 0.633 of golden issues at
 baseline, 0.646 with definitions and 0.677 with call sites added.
