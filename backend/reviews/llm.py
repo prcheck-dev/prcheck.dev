@@ -62,14 +62,16 @@ def _retryable(status: int | None, message: str) -> bool:
 class Completer:
     """Default completer: one single-turn model query. Tests substitute a fake."""
 
-    def complete(self, system_prompt: str, prompt: str, *, max_tokens: int | None = None):
+    def complete(self, system_prompt: str, prompt: str, *, max_tokens: int | None = None,
+                 reasoning_effort: str | None = None):
         """Return ``(text, usage_dict)``."""
         self.last_usage: dict = {}
         backend = str(_conf("PRCHECK_LLM_BACKEND", "azure-ai-foundry")).strip().lower()
         if backend == "anthropic":
             return self._complete_anthropic(system_prompt, prompt, max_tokens=max_tokens)
         if backend in {"openai", "openai-compatible", "azure-ai-foundry"}:
-            return self._complete_openai(system_prompt, prompt, max_tokens=max_tokens)
+            return self._complete_openai(system_prompt, prompt, max_tokens=max_tokens,
+                                         reasoning_effort=reasoning_effort)
         raise RuntimeError(f"unsupported PRCHECK_LLM_BACKEND: {backend}")
 
     # -- Anthropic ---------------------------------------------------------- #
@@ -116,7 +118,7 @@ class Completer:
         return text, self.last_usage
 
     # -- OpenAI-compatible (incl. Azure OpenAI) ----------------------------- #
-    def _complete_openai(self, system_prompt, prompt, *, max_tokens=None):
+    def _complete_openai(self, system_prompt, prompt, *, max_tokens=None, reasoning_effort=None):
         backend = str(_conf("PRCHECK_LLM_BACKEND", "")).strip().lower()
         is_foundry = backend == "azure-ai-foundry"
         provider_name = "azure-ai-foundry" if is_foundry else "openai"
@@ -144,6 +146,12 @@ class Completer:
             "max_tokens": max_tokens or int(_conf("PRCHECK_LLM_MAX_TOKENS", 4096)),
             "response_format": {"type": "json_object"},
         }
+        if reasoning_effort:
+            # gpt-5.x does no reasoning unless asked, and reasoning requests
+            # reject max_tokens and a custom temperature.
+            payload["reasoning_effort"] = reasoning_effort
+            payload["max_completion_tokens"] = payload.pop("max_tokens")
+            payload.pop("temperature")
         if api_version:  # Azure deployment-style endpoint: api-key + api-version
             url = f"{base}/chat/completions?api-version={api_version}"
             headers = {"api-key": api_key, "content-type": "application/json"}
@@ -269,6 +277,7 @@ def structured_call(
     schema: dict,
     stage: str | None = None,
     max_tokens: int | None = None,
+    reasoning_effort: str | None = None,
 ) -> dict | None:
     """One schema-validated model call with one retry. ``None`` means degrade."""
     if resolve_backend() == "deterministic":
@@ -279,7 +288,8 @@ def structured_call(
     for attempt in (1, 2):
         started = time.monotonic()
         try:
-            text, usage = completer.complete(system_prompt, attempt_prompt, max_tokens=max_tokens)
+            extra = {"reasoning_effort": reasoning_effort} if reasoning_effort else {}
+            text, usage = completer.complete(system_prompt, attempt_prompt, max_tokens=max_tokens, **extra)
         except Exception as exc:  # network / provider error
             LOGGER.warning(
                 "reviews_llm_call_error stage=%s session=%s attempt=%d error=%s",
