@@ -54,7 +54,7 @@ def _fake_complete(findings=None, adversary_verdict="CONCERNS"):
          "line": 2, "severity": "critical", "category": "security"},
     ]
 
-    def _complete(self, system_prompt, prompt, *, max_tokens=None):
+    def _complete(self, system_prompt, prompt, *, max_tokens=None, **_):
         if "Adversarial Verifier" in system_prompt:
             text = json.dumps({"verdict": adversary_verdict, "findings": []})
         else:
@@ -193,7 +193,7 @@ class RelatedDefinitionTests(TestCase):
 
         prompts = []
 
-        def _complete(self, system_prompt, prompt, *, max_tokens=None):
+        def _complete(self, system_prompt, prompt, *, max_tokens=None, **_):
             self.last_usage = {"provider": "fake", "total_tokens": 10}
             prompts.append(prompt)
             if "verifier" in system_prompt:
@@ -297,7 +297,7 @@ class CIEvidenceTests(TestCase):
 class AdversaryTests(TestCase):
     @override_settings(**REVIEW_SETTINGS)
     def test_uncited_block_downgraded_to_concerns(self):
-        def _complete(self, system_prompt, prompt, *, max_tokens=None):
+        def _complete(self, system_prompt, prompt, *, max_tokens=None, **_):
             self.last_usage = {"provider": "fake", "total_tokens": 5}
             # BLOCKER with a citation to a file NOT in the diff -> unverified.
             return json.dumps({"verdict": "BLOCK", "findings": [
@@ -378,7 +378,7 @@ class LLMTests(TestCase):
     def test_retry_on_invalid_then_success(self):
         calls = {"n": 0}
 
-        def _complete(self, system_prompt, prompt, *, max_tokens=None):
+        def _complete(self, system_prompt, prompt, *, max_tokens=None, **_):
             self.last_usage = {"provider": "fake", "total_tokens": 3}
             calls["n"] += 1
             if calls["n"] == 1:
@@ -428,7 +428,7 @@ class RunReviewTests(TestCase):
 # Deep review (per-file generate + verify)
 # --------------------------------------------------------------------------- #
 def _deep_fake(keep_only_a=True):
-    def _complete(self, system_prompt, prompt, *, max_tokens=None):
+    def _complete(self, system_prompt, prompt, *, max_tokens=None, **_):
         self.last_usage = {"provider": "fake", "total_tokens": 10}
         if "verifier" in system_prompt:  # verify system prompt only
             idxs = sorted({int(m) for m in re.findall(r"\[(\d+)\]", prompt)})
@@ -697,7 +697,7 @@ class DeepVerifyTests(TestCase):
     def _run(self, generated, verify_results):
         from .deep_review import run_deep_review
 
-        def _complete(self, system_prompt, prompt, *, max_tokens=None):
+        def _complete(self, system_prompt, prompt, *, max_tokens=None, **_):
             self.last_usage = {"provider": "fake", "total_tokens": 10}
             if "verifier" in system_prompt:
                 return json.dumps({"results": verify_results}), self.last_usage
@@ -737,7 +737,7 @@ class SelectionTests(TestCase):
     def _select(self, reply, top_k=2):
         from .selection import select_findings
 
-        def _complete(self, system_prompt, prompt, *, max_tokens=None):
+        def _complete(self, system_prompt, prompt, *, max_tokens=None, **_):
             self.last_usage = {"provider": "fake", "total_tokens": 10}
             return reply, self.last_usage
 
@@ -758,6 +758,22 @@ class SelectionTests(TestCase):
         reply = json.dumps({"selected": [{"index": 0}, {"index": 1}, {"index": 3}]})
         self.assertEqual(len(self._select(reply, top_k=2)), 2)
 
+    @override_settings(PRCHECK_SELECT_REASONING_EFFORT="medium", PRCHECK_SELECT_FILL=True)
+    def test_selector_asks_for_reasoning_and_a_full_quota(self):
+        from .selection import select_findings
+        seen = {}
+
+        def _complete(self, system_prompt, prompt, *, max_tokens=None, reasoning_effort=None):
+            seen.update(prompt=prompt, effort=reasoning_effort)
+            self.last_usage = {"provider": "fake", "total_tokens": 10}
+            return json.dumps({"selected": [{"index": 0}]}), self.last_usage
+
+        with mock.patch.object(Completer, "complete", _complete):
+            select_findings(Completer(), Budget(), pr_title="t", diff_text="d",
+                            findings=self.FINDINGS, top_k=8)
+        self.assertEqual(seen["effort"], "medium")
+        self.assertIn("Post 3 findings, most important first", seen["prompt"])
+
     def test_degraded_call_falls_back_to_severity_ranking(self):
         self.assertEqual([f["line"] for f in self._select("not json")], [3, 1])
 
@@ -770,7 +786,7 @@ class SelectionTests(TestCase):
         ]
         base = _fake_complete(findings)
 
-        def _complete(self, system_prompt, prompt, *, max_tokens=None):
+        def _complete(self, system_prompt, prompt, *, max_tokens=None, **_):
             if "triaging" in system_prompt:
                 self.last_usage = {"provider": "fake", "total_tokens": 10}
                 return json.dumps({"selected": [{"index": 0}]}), self.last_usage
@@ -896,7 +912,7 @@ class RepoContextTests(TestCase):
 class AdversaryCitationTests(TestCase):
     @override_settings(**REVIEW_SETTINGS)
     def test_citation_must_land_on_a_changed_line(self):
-        def _complete(self, system_prompt, prompt, *, max_tokens=None):
+        def _complete(self, system_prompt, prompt, *, max_tokens=None, **_):
             self.last_usage = {"provider": "fake", "total_tokens": 5}
             return json.dumps({"verdict": "BLOCK", "findings": [
                 {"persona": "saboteur", "severity": "BLOCKER", "text": "far", "citation": "app/x.py:90"},
@@ -946,7 +962,7 @@ class RunReviewQualityTests(TestCase):
     def test_verified_adversary_blocker_is_shown_as_a_finding(self):
         review = Review.objects.create(repo="o/r", pr_number=7)
 
-        def _complete(self, system_prompt, prompt, *, max_tokens=None):
+        def _complete(self, system_prompt, prompt, *, max_tokens=None, **_):
             self.last_usage = {"provider": "fake", "total_tokens": 5}
             if "Adversarial Verifier" in system_prompt:
                 return json.dumps({"verdict": "BLOCK", "findings": [{
