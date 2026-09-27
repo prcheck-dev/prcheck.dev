@@ -124,7 +124,12 @@ comparisons are approximate. One run per row; treat ±0.02 as noise.
 | 2026-09-26 | deep + PR-level selection (8ae2da6) | 0.423 | 0.449 | 0.436 | 3.5 |
 | 2026-09-27 | same code, rerun with retry fix (mean of 4) | 0.39 | 0.43 | 0.408 | 3.6 |
 | 2026-09-27 | + definitions of called functions (mean of 4) | 0.42 | 0.45 | 0.435 | 3.6 |
-| 2026-09-27 | + call sites of changed functions, 30 related files (mean of 4) | 0.43 | 0.46 | **0.443** | 3.6 |
+| 2026-09-27 | + call sites of changed functions, 30 related files (mean of 4) | 0.43 | 0.46 | 0.443 | 3.6 |
+| 2026-09-27 | + selector with medium reasoning, fills its quota (mean of 3) | 0.43 | 0.49 | **0.461** | 3.7 |
+
+The last row reran only the selection stage on the previous row's saved
+findings (three draws); reasoning for selection alone, without the fill
+wording, gave 0.458 at precision 0.52 and 2.5 findings per PR.
 
 Before selection, the reviewer's findings cover 0.633 of golden issues at
 baseline, 0.646 with definitions and 0.677 with call sites added.
