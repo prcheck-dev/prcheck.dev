@@ -293,6 +293,8 @@ PRCHECK_SELECT_REASONING_EFFORT = env("PRCHECK_SELECT_REASONING_EFFORT", default
 # Ask the selector to post up to the limit rather than "fewer is better"; a
 # reasoning selector otherwise posts ~2 findings per PR.
 PRCHECK_SELECT_FILL = env.bool("PRCHECK_SELECT_FILL", default=True)
+# Show each finding's generator confidence to the selector.
+PRCHECK_SELECT_SHOW_CONFIDENCE = env.bool("PRCHECK_SELECT_SHOW_CONFIDENCE", default=False)
 # Show a GitHub check run ("prcheck / review") that goes in-progress -> pass/fail.
 PRCHECK_ENABLE_CHECKS = env.bool("PRCHECK_ENABLE_CHECKS", default=True)
 # PR comment that triggers a review, e.g. "/prcheck" or "/prcheck review".

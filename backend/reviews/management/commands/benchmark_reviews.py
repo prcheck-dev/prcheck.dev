@@ -169,12 +169,16 @@ class Command(BaseCommand):
             api = gh.GitHubAPI(repo=repo, token=settings.PRCHECK_GITHUB_TOKEN)
             snapshot = gh.fetch_pull_snapshot(api, number)
             _, review_diff, _ = filter_reviewable(snapshot.changed_files, snapshot.diff_text)
+            # Pool rows of older runs lack confidence; recover it from the
+            # captured pre-verify findings when those were recorded.
+            generated_conf = {r["comment"]: r.get("confidence") for r in source.get("generated", [])}
             findings = []
             for row in source["unselected"]:
                 text, _, suggestion = row["comment"].partition("\n\nSuggested fix: ")
                 findings.append({"text": text, "suggestion": suggestion, "path": row["path"],
                                  "line": row["line"], "severity": row["severity"].lower(),
-                                 "category": row["category"], "source": row.get("source")})
+                                 "category": row["category"], "source": row.get("source"),
+                                 "confidence": row.get("confidence", generated_conf.get(row["comment"]))})
             chosen = select_findings(
                 Completer(), Budget(), pr_title=snapshot.title, diff_text=number_diff(review_diff),
                 findings=findings, top_k=int(getattr(settings, "PRCHECK_REVIEW_TOP_K", 8)),

@@ -82,6 +82,17 @@ def _confidence(finding: dict) -> float:
         return 1.0
 
 
+def _label(finding: dict) -> str:
+    # The generator's own confidence ranks findings about as well as the
+    # selector does (AUC 0.73 each on the benchmark), so it can be shown.
+    if _conf("PRCHECK_SELECT_SHOW_CONFIDENCE", False) and finding.get("confidence") is not None:
+        try:
+            return f"{finding.get('category')}, reviewer confidence {float(finding['confidence']):.2f}"
+        except (TypeError, ValueError):
+            pass
+    return str(finding.get("category"))
+
+
 def _quota(limit: int) -> str:
     # A reasoning selector reads "fewer is better" literally and posts ~2 per
     # PR; the fill wording keeps its precision while posting up to the limit.
@@ -125,7 +136,7 @@ def select_findings(
     findings = sort_by_location(findings)
     limit = post_limit(len(findings), top_k)
     listing = "\n".join(
-        f"[{i}] ({f.get('category')}) {f.get('path')}:{f.get('line')} — {f.get('text')}"
+        f"[{i}] ({_label(f)}) {f.get('path')}:{f.get('line')} — {f.get('text')}"
         for i, f in enumerate(findings)
     )
     try:
