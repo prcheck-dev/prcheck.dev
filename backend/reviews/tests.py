@@ -932,6 +932,38 @@ class LLMRetryTests(TestCase):
 
         with mock.patch("reviews.llm.urlopen", _urlopen), mock.patch("reviews.llm.time.sleep"):
             self.assertEqual(Completer()._post("https://llm.test/v1", {}, headers={}, provider="openai"), "ok")
+class RelatedPathResolutionTests(TestCase):
+    TREE = [
+        "server-spi/src/main/java/org/keycloak/models/UserModel.java",
+        "src/sentry/api/paginator.py",
+        "app/models/embeddable_host.rb", "app/controllers/application_controller.rb",
+        "pkg/services/auth/identity.go", "pkg/services/auth/identity_test.go",
+    ]
+
+    def _paths(self, source, content):
+        return gh._related_candidate_paths(source, content, self.TREE)
+
+    def test_java_imports_resolve_under_module_source_roots(self):
+        self.assertEqual(self._paths("services/src/main/java/org/keycloak/x/Foo.java",
+                                     "import org.keycloak.models.UserModel;\nclass Foo {}"),
+                         ["server-spi/src/main/java/org/keycloak/models/UserModel.java"])
+
+    def test_python_imports_resolve_under_a_src_root(self):
+        self.assertEqual(self._paths("src/sentry/api/endpoints/x.py",
+                                     "from sentry.api.paginator import Paginator\n"),
+                         ["src/sentry/api/paginator.py"])
+
+    def test_ruby_constants_and_base_classes_resolve_by_snake_case_file(self):
+        self.assertEqual(self._paths("app/controllers/embed_controller.rb",
+                                     "class EmbedController < ApplicationController\n  EmbeddableHost.find(1)\nend"),
+                         ["app/controllers/application_controller.rb", "app/models/embeddable_host.rb"])
+
+    def test_go_imports_resolve_to_package_files_without_tests(self):
+        self.assertEqual(self._paths("pkg/api/api.go",
+                                     'package api\nimport (\n\t"github.com/o/r/pkg/services/auth"\n)\n'),
+                         ["pkg/services/auth/identity.go"])
+
+
 class RepoContextTests(TestCase):
     def test_definitions_of_called_names_come_from_other_files(self):
         from .repo_context import symbols_for_file, targeted_definitions

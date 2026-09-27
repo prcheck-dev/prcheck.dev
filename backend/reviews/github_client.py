@@ -382,6 +382,14 @@ _BASE_RE = re.compile(
     re.M,
 )
 _SYMBOL_RE = re.compile(r"\b(?:class|interface|enum|type|struct)\s+([A-Z][A-Za-z0-9_]*)")
+# Java/Kotlin `import a.b.C;` (static and wildcard imports are skipped).
+_JAVA_IMPORT_RE = re.compile(r"^\s*import\s+([a-z][\w]*(?:\.[\w]+)+)\s*;?\s*$", re.M)
+# Go import specs, single or inside an import ( ... ) block.
+_GO_IMPORT_RE = re.compile(r'^\s*(?:import\s+)?(?:[\w.]+\s+)?"([\w.\-/]+)"\s*$', re.M)
+# Ruby: `class Foo < Bar` bases and CamelCase constants (Rails autoloads them by
+# snake_case file name, so there is no import to follow).
+_RUBY_BASE_RE = re.compile(r"^\s*class\s+[\w:]+\s*<\s*([\w:]+)", re.M)
+_RUBY_CONST_RE = re.compile(r"\b([A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)+|[A-Z][a-z]{3,})\b")
 _RELATED_EXTENSIONS = (".py", ".pyi", ".js", ".jsx", ".ts", ".tsx", ".java", ".kt", ".go", ".rs", ".rb", ".cs")
 
 
@@ -435,19 +443,53 @@ def _related_candidate_paths(source_path: str, content: str, tree_paths: list[st
 
     selected: list[str] = []
     source_dir = source_path.rsplit("/", 1)[0] if "/" in source_path else ""
+    by_name: dict[str, list[str]] = {}
+    for path in tree:
+        by_name.setdefault(path.rsplit("/", 1)[-1], []).append(path)
 
     def add(path: str) -> None:
         if path in tree and path != source_path and path not in selected:
             selected.append(path)
 
-    # Imports are the strongest signal: resolve exact module files first.
+    def add_suffix(relative: str, limit: int = 2) -> None:
+        # Source roots (src/, server-spi/src/main/java/, public/) sit in front of
+        # the import path, so match on the path suffix, preferring nearby files.
+        matches = [path for path in by_name.get(relative.rsplit("/", 1)[-1], [])
+                   if path == relative or path.endswith("/" + relative)]
+        matches.sort(key=lambda path: (0 if path.startswith(source_dir.split("/")[0] + "/") else 1, len(path)))
+        for path in matches[:limit]:
+            add(path)
+
+    # Imports are the strongest signal: resolve module files first.
     for module in module_paths:
         for ext in _RELATED_EXTENSIONS:
-            add(module + ext)
-        for ext in _RELATED_EXTENSIONS:
-            add(module + "/__init__" + ext)
+            add_suffix(module + ext)
+        for init in ("/__init__.py", "/index.ts", "/index.tsx", "/index.js"):
+            add_suffix(module + init)
         if module.startswith("."):
             add(f"{source_dir}/{module.lstrip('./')}")
+    if source_path.endswith((".java", ".kt")):
+        for match in _JAVA_IMPORT_RE.finditer(content):
+            ext = ".kt" if source_path.endswith(".kt") else ".java"
+            add_suffix(match.group(1).replace(".", "/") + ext)
+    if source_path.endswith(".go"):
+        # A Go import names a package directory; take its non-test files.
+        for match in _GO_IMPORT_RE.finditer(content):
+            parts = match.group(1).split("/")
+            tail = "/".join(parts[-2:]) if len(parts) > 1 else parts[0]
+            files = sorted(path for path in tree if path.endswith(".go") and not path.endswith("_test.go")
+                           and ("/" + path.rsplit("/", 1)[0]).endswith("/" + tail))
+            for path in files[:3]:
+                add(path)
+    if source_path.endswith(".rb"):
+        constants = [m.group(1).split("::")[-1] for m in _RUBY_BASE_RE.finditer(content)]
+        constants += _RUBY_CONST_RE.findall(content)
+        for constant in dict.fromkeys(constants):
+            snake = re.sub(r"(?<!^)(?=[A-Z])", "_", constant).lower()
+            candidates = by_name.get(snake + ".rb", [])
+            candidates = sorted(candidates, key=lambda path: (not path.startswith(("app/", "lib/")), len(path)))
+            for path in candidates[:1]:
+                add(path)
 
     # Then locate definitions by symbol, preferring nearby paths and exact stems.
     for symbol in symbols:
