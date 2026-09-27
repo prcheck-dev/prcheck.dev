@@ -295,6 +295,12 @@ PRCHECK_SELECT_REASONING_EFFORT = env("PRCHECK_SELECT_REASONING_EFFORT", default
 PRCHECK_SELECT_FILL = env.bool("PRCHECK_SELECT_FILL", default=True)
 # Show each finding's generator confidence to the selector.
 PRCHECK_SELECT_SHOW_CONFIDENCE = env.bool("PRCHECK_SELECT_SHOW_CONFIDENCE", default=False)
+# After selection: drop picks the generator rated below MIN_CONFIDENCE, and add
+# findings it rated at least CERTAIN_CONFIDENCE, filling up to CERTAIN_FILL_TO.
+PRCHECK_SELECT_USE_CONFIDENCE = env.bool("PRCHECK_SELECT_USE_CONFIDENCE", default=True)
+PRCHECK_SELECT_MIN_CONFIDENCE = env.float("PRCHECK_SELECT_MIN_CONFIDENCE", default=0.7)
+PRCHECK_POST_CERTAIN_CONFIDENCE = env.float("PRCHECK_POST_CERTAIN_CONFIDENCE", default=0.9)
+PRCHECK_POST_CERTAIN_FILL_TO = env.int("PRCHECK_POST_CERTAIN_FILL_TO", default=4)
 # Show a GitHub check run ("prcheck / review") that goes in-progress -> pass/fail.
 PRCHECK_ENABLE_CHECKS = env.bool("PRCHECK_ENABLE_CHECKS", default=True)
 # PR comment that triggers a review, e.g. "/prcheck" or "/prcheck review".

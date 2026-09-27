@@ -38,7 +38,7 @@ from reviews.budget import Budget
 from reviews.diffs import filter_reviewable, number_diff
 from reviews.llm import Completer
 from reviews.models import Review
-from reviews.selection import select_findings
+from reviews.selection import adjust_by_confidence
 from reviews.services import run_review
 
 OFFLINE_SETTINGS = dict(
@@ -115,7 +115,8 @@ class Command(BaseCommand):
 
         def _capturing_select(*args, **kwargs):
             captured.findings = list(kwargs.get("findings") or [])
-            return real_select(*args, **kwargs)
+            captured.picked = real_select(*args, **kwargs)
+            return captured.picked
 
         # Deep review fans out to its own worker threads; carry this review's
         # capture lists into them so generate/verify results land per PR.
@@ -179,12 +180,15 @@ class Command(BaseCommand):
                                  "line": row["line"], "severity": row["severity"].lower(),
                                  "category": row["category"], "source": row.get("source"),
                                  "confidence": row.get("confidence", generated_conf.get(row["comment"]))})
-            chosen = select_findings(
+            picked = real_select(
                 Completer(), Budget(), pr_title=snapshot.title, diff_text=number_diff(review_diff),
                 findings=findings, top_k=int(getattr(settings, "PRCHECK_REVIEW_TOP_K", 8)),
             )
+            chosen = (adjust_by_confidence(picked, findings)
+                      if getattr(settings, "PRCHECK_SELECT_USE_CONFIDENCE", True) else picked)
             by_id = {id(f): row for f, row in zip(findings, source["unselected"])}
-            return {**source, "comments": [by_id[id(f)] for f in chosen]}
+            return {**source, "picked": [by_id[id(f)] for f in picked],
+                    "comments": [by_id[id(f)] for f in chosen]}
 
         def _review(entry):
             if previous is not None:
@@ -196,7 +200,7 @@ class Command(BaseCommand):
                 return
             repo, number = _parse_url(entry["url"])
             result = {"pr_title": entry.get("pr_title", ""), "url": entry["url"], "comments": []}
-            captured.findings = None
+            captured.findings, captured.picked = None, None
             captured.generated, captured.verified, captured.related = [], [], {}
             try:
                 review = run_review(
@@ -210,6 +214,14 @@ class Command(BaseCommand):
                         for f in review.findings.all()
                     ],
                 )
+                if captured.picked is not None:
+                    # The selector's own choice, before the confidence adjustment.
+                    result["picked"] = [
+                        _row(f.get("text", ""), f.get("suggestion") or "", f.get("severity", ""),
+                             f.get("category", ""), f.get("path", ""), f.get("line", 0),
+                             source=f.get("source"))
+                        for f in captured.picked
+                    ]
                 if captured.findings is not None:
                     result["unselected"] = [
                         _row(f.get("text", ""), f.get("suggestion") or "", f.get("severity", ""),

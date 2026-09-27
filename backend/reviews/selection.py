@@ -171,3 +171,27 @@ def select_findings(
             break
     LOGGER.info("reviews_selected kept=%d of=%d", len(selected), len(findings))
     return selected
+
+
+def _confidence_of(finding: dict) -> float | None:
+    try:
+        return float(finding["confidence"]) if finding.get("confidence") is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def adjust_by_confidence(chosen: list[dict], pool: list[dict]) -> list[dict]:
+    """Combine the selector's picks with the generator's own confidence.
+
+    Each signal ranks findings about as well as the other (AUC ~0.73 on the
+    benchmark) and they disagree often enough to combine: picks the generator
+    itself doubted are dropped, and findings it was near-certain about are
+    added when the selector left them out, up to a small total.
+    """
+    floor = float(_conf("PRCHECK_SELECT_MIN_CONFIDENCE", 0.7))
+    certain = float(_conf("PRCHECK_POST_CERTAIN_CONFIDENCE", 0.9))
+    fill_to = int(_conf("PRCHECK_POST_CERTAIN_FILL_TO", 4))
+    kept = [f for f in chosen if (_confidence_of(f) is None or _confidence_of(f) >= floor)]
+    extras = [f for f in pool
+              if f not in kept and (_confidence_of(f) or 0) >= certain and f.get("source") != "adversary"]
+    return (kept + extras)[:max(fill_to, len(kept))]

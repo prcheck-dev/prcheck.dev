@@ -774,6 +774,18 @@ class SelectionTests(TestCase):
         self.assertEqual(seen["effort"], "medium")
         self.assertIn("Post 3 findings, most important first", seen["prompt"])
 
+    def test_confidence_drops_doubted_picks_and_adds_certain_findings(self):
+        from .selection import adjust_by_confidence
+        pool = [
+            {"text": "picked, confident", "confidence": 0.8},
+            {"text": "picked, doubted", "confidence": 0.5},
+            {"text": "unpicked, certain", "confidence": 0.95},
+            {"text": "unpicked, unsure", "confidence": 0.6},
+            {"text": "adversary, certain", "confidence": 0.99, "source": "adversary"},
+        ]
+        chosen = adjust_by_confidence([pool[0], pool[1]], pool)
+        self.assertEqual([f["text"] for f in chosen], ["picked, confident", "unpicked, certain"])
+
     def test_degraded_call_falls_back_to_severity_ranking(self):
         self.assertEqual([f["line"] for f in self._select("not json")], [3, 1])
 

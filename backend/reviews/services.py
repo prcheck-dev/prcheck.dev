@@ -26,7 +26,7 @@ from .findings import dedupe_findings, ground_findings, sort_findings
 from .llm import Completer
 from .models import Finding, Review
 from .reviewer import build_review_shards, merge_review_results, run_reviewer
-from .selection import select_findings
+from .selection import adjust_by_confidence, select_findings
 from .verdict import APPROVE, APPROVE_COND, compute_verdict
 
 LOGGER = logging.getLogger("reviews.services")
@@ -131,10 +131,13 @@ def _run_pipeline(review, api, snapshot, budget, completer, check_run_id) -> Rev
 
     findings = dedupe_findings(findings)
     if _conf("PRCHECK_REVIEW_SELECT", True):
+        pool = sort_findings(findings)
         findings = select_findings(
             completer, budget, pr_title=snapshot.title, diff_text=number_diff(review_diff),
-            findings=sort_findings(findings), top_k=int(_conf("PRCHECK_REVIEW_TOP_K", 5)),
+            findings=pool, top_k=int(_conf("PRCHECK_REVIEW_TOP_K", 5)),
         )
+        if _conf("PRCHECK_SELECT_USE_CONFIDENCE", True):
+            findings = adjust_by_confidence(findings, pool)
 
     return _finalize(
         review, api, snapshot,
