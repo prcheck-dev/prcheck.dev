@@ -289,6 +289,8 @@ PRCHECK_REVIEW_POST_SHARE = env.float("PRCHECK_REVIEW_POST_SHARE", default=1 / 3
 # Reasoning effort for the selection call only ("", "low", "medium", "high").
 # Generation stays non-reasoning: with reasoning it reports far fewer issues.
 PRCHECK_SELECT_REASONING_EFFORT = env("PRCHECK_SELECT_REASONING_EFFORT", default="")
+# Ask the selector to post up to the limit rather than "fewer is better".
+PRCHECK_SELECT_FILL = env.bool("PRCHECK_SELECT_FILL", default=False)
 # Show a GitHub check run ("prcheck / review") that goes in-progress -> pass/fail.
 PRCHECK_ENABLE_CHECKS = env.bool("PRCHECK_ENABLE_CHECKS", default=True)
 # PR comment that triggers a review, e.g. "/prcheck" or "/prcheck review".

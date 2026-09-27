@@ -44,7 +44,7 @@ SELECT_SCHEMA: dict = {
 
 SELECT_SYSTEM_PROMPT = "You are a senior maintainer triaging automated review comments. Reply only JSON."
 
-SELECT_PROMPT = """An automated reviewer produced the candidate findings below for one pull request. You decide which ones get posted. Post at most {top_k}; fewer is better when the rest are weak. Every posted comment that is wrong, hedged, duplicated, or not worth a maintainer's time costs the reviewer its credibility.
+SELECT_PROMPT = """An automated reviewer produced the candidate findings below for one pull request. You decide which ones get posted. {quota} Every posted comment that is wrong, hedged, duplicated, or not worth a maintainer's time costs the reviewer its credibility.
 
 Severity labels are deliberately omitted; judge each candidate from the diff. Rank candidates by how certainly and how badly the changed code misbehaves:
 1. Definite failures on a normal path: crash/exception, wrong result, broken contract with a base class or caller, security or authorization hole, data loss.
@@ -80,6 +80,15 @@ def _confidence(finding: dict) -> float:
         return float(finding.get("confidence", 1.0))
     except (TypeError, ValueError):
         return 1.0
+
+
+def _quota(limit: int) -> str:
+    # A reasoning selector reads "fewer is better" literally and posts ~2 per
+    # PR; the fill wording keeps its precision while posting up to the limit.
+    if _conf("PRCHECK_SELECT_FILL", False):
+        return (f"Post {limit} findings, most important first; post fewer only when fewer than "
+                f"{limit} candidates are real defects in the changed code.")
+    return f"Post at most {limit}; fewer is better when the rest are weak."
 
 
 def post_limit(candidates: int, top_k: int) -> int:
@@ -124,7 +133,7 @@ def select_findings(
             completer, budget, session="select",
             system_prompt=SELECT_SYSTEM_PROMPT,
             prompt=SELECT_PROMPT.format(
-                top_k=limit,
+                quota=_quota(limit),
                 input_rules=INPUT_RULES,
                 pr_title=pr_title,
                 diff=fence(diff_text, int(_conf("PRCHECK_REVIEW_DIFF_LIMIT", 120_000))),
