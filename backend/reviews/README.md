@@ -128,7 +128,9 @@ comparisons are approximate. One run per row; treat ±0.02 as noise.
 | 2026-09-27 | + selector with medium reasoning, fills its quota (mean of 3) | 0.43 | 0.49 | 0.461 | 3.7 |
 | 2026-09-27 | same, fresh end-to-end run (1 run) | 0.45 | 0.50 | 0.473 | 3.6 |
 | 2026-09-27 | + picks adjusted by generator confidence (mean of 3 selection draws) | 0.45 | 0.49 | 0.468 | 3.6 |
-| 2026-09-27 | + majority vote of 3 selector runs (same findings) | 0.46 | 0.50 | **0.480** | 3.5 |
+| 2026-09-27 | + majority vote of 3 selector runs (same findings) | 0.46 | 0.50 | 0.480 | 3.5 |
+| 2026-09-27 | same code, second fresh run (v17) | 0.44 | 0.49 | 0.464 | 3.6 |
+| 2026-09-27 | + related files for Java, Ruby, Go, src/ Python (mean of 2 runs) | 0.47 | 0.50 | **0.485** | 3.6 |
 
 The last row reran only the selection stage on the previous row's saved
 findings (three draws); reasoning for selection alone, without the fill
@@ -149,8 +151,25 @@ The 0.436 first run was at the lucky end of the noise: the same code scores
 "mean of 4" average one full run and three reruns of the selection stage on
 its saved findings, which removes most of the selector's run-to-run noise.
 
-Leaderboard reference on the same judge: cubic-v2 0.58,
-qodo-extended-v2 0.57, augment 0.54, gemini-v2 / copilot-v2 0.45.
+### Official scoring
+
+The rows above use the local judge. The upstream pipeline
+(`code-review-benchmark/offline`: LLM extraction, dedup, judge; Core profile,
+gpt-5.2 judge) is what the leaderboard reports; runs are staged with
+`experiments/.../official_score.py` and scored three times each because the
+pipeline itself varies by about +-0.02 on identical input.
+
+| Version | Official Core F1 |
+|---------|------------------|
+| deep + PR-level selection (the 0.436 row) | 0.423 |
+| majority-vote selection, run v16 / run v17 | 0.487 / 0.439 |
+| + language-aware related files, run v18a / v18b | 0.465 / 0.480 |
+
+Leaderboard (Core, gpt-5.2 judge): qodo-extended-v2 0.589, cubic-v2 0.587,
+augment 0.545, qodo-v2 0.534, bugbot 0.485, qodo-extended-summary 0.484,
+devin 0.483, gitlab 0.465, greptile-v4-1 0.450. prcheck's current estimate,
+~0.47 averaged over runs, sits between devin and gitlab; a single run can land
+anywhere in roughly +-0.025 of it.
 
 ## Configuration
 
