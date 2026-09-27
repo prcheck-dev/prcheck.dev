@@ -774,6 +774,24 @@ class SelectionTests(TestCase):
         self.assertEqual(seen["effort"], "medium")
         self.assertIn("Post 3 findings, most important first", seen["prompt"])
 
+    @override_settings(PRCHECK_SELECT_VOTES=3)
+    def test_majority_of_selector_runs_decides(self):
+        from .selection import select_findings
+        # Location order: a.py:1, a.py:3, a.py:4, b.py:2 -> indices 0..3.
+        replies = iter([[0, 3], [0, 1], [3, 2]])
+        lock = __import__("threading").Lock()
+
+        def _complete(self, system_prompt, prompt, *, max_tokens=None, **_):
+            with lock:
+                picks = next(replies)
+            self.last_usage = {"provider": "fake", "total_tokens": 10}
+            return json.dumps({"selected": [{"index": i} for i in picks]}), self.last_usage
+
+        with mock.patch.object(Completer, "complete", _complete):
+            chosen = select_findings(Completer(), Budget(), pr_title="t", diff_text="d",
+                                     findings=self.FINDINGS, top_k=8)
+        self.assertEqual(sorted(f["line"] for f in chosen), [1, 2])
+
     def test_confidence_drops_doubted_picks_and_adds_certain_findings(self):
         from .selection import adjust_by_confidence
         pool = [

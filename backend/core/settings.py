@@ -293,6 +293,8 @@ PRCHECK_SELECT_REASONING_EFFORT = env("PRCHECK_SELECT_REASONING_EFFORT", default
 # Ask the selector to post up to the limit rather than "fewer is better"; a
 # reasoning selector otherwise posts ~2 findings per PR.
 PRCHECK_SELECT_FILL = env.bool("PRCHECK_SELECT_FILL", default=True)
+# Selector runs per review; a finding is posted when a majority picked it.
+PRCHECK_SELECT_VOTES = env.int("PRCHECK_SELECT_VOTES", default=3)
 # Show each finding's generator confidence to the selector.
 PRCHECK_SELECT_SHOW_CONFIDENCE = env.bool("PRCHECK_SELECT_SHOW_CONFIDENCE", default=False)
 # After selection: drop picks the generator rated below MIN_CONFIDENCE, and add
